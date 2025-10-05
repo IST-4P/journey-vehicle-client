@@ -327,7 +327,7 @@ export function MotorcycleRental() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
             {filteredMotorcycles.map((motorcycle) => (
               <Card key={motorcycle.id} className="overflow-hidden hover:shadow-lg transition-shadow">
                 <div className="relative">
