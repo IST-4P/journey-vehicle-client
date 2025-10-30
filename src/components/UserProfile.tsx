@@ -3,7 +3,7 @@ import { Routes, Route, Link, useLocation } from 'react-router-dom';
 import { 
   User, History, MapPin, CreditCard, MessageSquare, 
   Lock, LogOut, Camera, Star, Eye, Upload, Plus,
-  Check, X, Clock, MessageCircle
+  Check, MessageCircle
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
@@ -17,7 +17,8 @@ import { Separator } from './ui/separator';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { ImageWithFallback } from './figma/ImageWithFallback';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
+import { uploadAvatarImage } from '../utils/imgbb';
 
 interface UserProfileProps {
   user: any;
@@ -26,6 +27,23 @@ interface UserProfileProps {
 export function UserProfile({ user }: UserProfileProps) {
   const location = useLocation();
   const [selectedTab, setSelectedTab] = useState('account');
+  const [currentUser, setCurrentUser] = useState(user);
+
+  // Function to refresh user data
+  const refreshUserData = async () => {
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/user/profile`, {
+        credentials: 'include'
+      });
+      
+      if (response.ok) {
+        const userData = await response.json();
+        setCurrentUser(userData);
+      }
+    } catch (error) {
+      console.error('Error refreshing user data:', error);
+    }
+  };
 
   const sidebarItems = [
     { id: 'account', label: 'Tài khoản của tôi', icon: User, path: '/profile/account' },
@@ -46,13 +64,15 @@ export function UserProfile({ user }: UserProfileProps) {
             <CardContent className="p-6">
               <div className="text-center mb-6">
                 <Avatar className="h-20 w-20 mx-auto mb-3">
-                  <AvatarImage src={user.user_metadata?.avatar} />
+                  <AvatarImage src={currentUser.avatarUrl } />
                   <AvatarFallback>
-                    {user.user_metadata?.name?.charAt(0) || user.email?.charAt(0)}
+                    {currentUser.data?.fullName?.charAt(0)}
                   </AvatarFallback>
                 </Avatar>
-                <h3 className="font-semibold">{user.user_metadata?.name || user.email}</h3>
-                <p className="text-sm text-gray-600">{user.email}</p>
+                <h3 className="font-semibold">
+                  {currentUser.data?.fullName || currentUser.user_metadata?.name || currentUser.email}
+                </h3>
+                <p className="text-sm text-gray-600">{currentUser.data?.email || currentUser.email}</p>
               </div>
               
               <nav className="space-y-1">
@@ -78,13 +98,13 @@ export function UserProfile({ user }: UserProfileProps) {
         {/* Main Content */}
         <div className="lg:col-span-3">
           <Routes>
-            <Route path="/account" element={<AccountTab user={user} />} />
+            <Route path="/account" element={<AccountTab user={currentUser} />} />
             <Route path="/history" element={<HistoryTab />} />
             <Route path="/addresses" element={<AddressesTab />} />
             <Route path="/payment" element={<PaymentTab />} />
             <Route path="/complaints" element={<ComplaintsTab />} />
             <Route path="/password" element={<PasswordTab />} />
-            <Route path="/" element={<AccountTab user={user} />} />
+            <Route path="/" element={<AccountTab user={currentUser} />} />
           </Routes>
         </div>
       </div>
@@ -92,23 +112,124 @@ export function UserProfile({ user }: UserProfileProps) {
   );
 }
 
-function AccountTab({ user }: { user: any }) {
+interface User {
+  avatarUrl?: string;
+  phone?: string;
+  email: string;
+  fullName?: string;
+  data?: {
+    facebook?: string;
+    dateOfBirth?: string;
+    verified?: boolean;
+  };
+}
+
+function AccountTab({ user }: { user: User }) {
   const [profileData, setProfileData] = useState({
-    avatar: user.user_metadata?.avatar || '',
-    phone: user.user_metadata?.phone || '',
+    avatar: user.avatarUrl,
+    phone: user.phone,
     email: user.email,
-    facebook: '',
+    facebook: user.data?.facebook || '',
     drivingLicense: '',
     licenseNumber: '',
-    fullName: user.user_metadata?.name || '',
-    dateOfBirth: '',
-    verified: false
+    fullName: user.fullName || '',
+    dateOfBirth: user.data?.dateOfBirth || '',
+    verified: user.data?.verified || false
   });
 
   const [showLicenseUpload, setShowLicenseUpload] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSave = () => {
-    toast.success('Thông tin đã được cập nhật');
+  const handleAvatarUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setIsLoading(true);
+      
+      // Upload lên ImgBB và lấy URL
+      const imageUrl = await uploadAvatarImage(file, import.meta.env.VITE_IMGBB_API_KEY);
+      
+      // Lưu URL ảnh vào database qua API của mình
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/user/profile`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          avatarUrl: imageUrl
+        })
+      });
+
+      if (response.ok) {
+        setProfileData(prev => ({
+          ...prev,
+          avatar: imageUrl
+        }));
+        toast.success('Cập nhật ảnh đại diện thành công!');
+        // Trigger parent component refresh
+        window.location.reload();
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Lưu URL ảnh vào database thất bại');
+      }
+    } catch (error) {
+      console.error('Error uploading avatar:', error);
+      if (error instanceof Error) {
+        toast.error(error.message);
+      } else {
+        toast.error('Có lỗi xảy ra khi tải ảnh lên');
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSave = async () => {
+    setIsLoading(true);
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/user/profile`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          fullName: profileData.fullName,
+          phone: profileData.phone,
+          avatarUrl: profileData.avatar
+        })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log('Profile updated:', result);
+        toast.success('Thông tin đã được cập nhật thành công!');
+        
+        // Cập nhật lại state từ response
+        if (result.data) {
+          setProfileData(prev => ({
+            ...prev,
+            fullName: result.data.fullName,
+            phone: result.data.phone ,
+            facebook: result.data.facebook,
+            avatar: result.avatarUrl,
+            dateOfBirth: result.data.dateOfBirth 
+          }));
+        }
+        
+        // Trigger parent component refresh
+        window.location.reload();
+      } else {
+        throw new Error('Cập nhật thất bại');
+      }
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      toast.error('Có lỗi xảy ra khi cập nhật thông tin');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -122,16 +243,28 @@ function AccountTab({ user }: { user: any }) {
           <Avatar className="h-20 w-20">
             <AvatarImage src={profileData.avatar} />
             <AvatarFallback>
-              {profileData.fullName?.charAt(0) || profileData.email?.charAt(0)}
+              {profileData.avatar}
             </AvatarFallback>
           </Avatar>
           <div>
-            <Button variant="outline" size="sm">
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handleAvatarUpload}
+              style={{ display: 'none' }}
+              id="avatar-upload"
+            />
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={() => document.getElementById('avatar-upload')?.click()}
+              disabled={isLoading}
+            >
               <Camera className="h-4 w-4 mr-2" />
-              Thay đổi ảnh
+              {isLoading ? 'Đang tải...' : 'Thay đổi ảnh'}
             </Button>
             <p className="text-sm text-gray-600 mt-1">
-              JPG, PNG tối đa 5MB
+              JPG, PNG, GIF tối đa 32MB (qua ImgBB)
             </p>
           </div>
         </div>
@@ -212,8 +345,8 @@ function AccountTab({ user }: { user: any }) {
           </div>
         </div>
 
-        <Button onClick={handleSave} className="w-full md:w-auto">
-          Lưu thông tin
+        <Button onClick={handleSave} className="w-full md:w-auto" disabled={isLoading}>
+          {isLoading ? 'Đang lưu...' : 'Lưu thông tin'}
         </Button>
 
         {/* License Upload Modal */}
@@ -883,8 +1016,9 @@ function PasswordTab() {
     new: '',
     confirm: ''
   });
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleChangePassword = () => {
+  const handleChangePassword = async () => {
     if (!passwords.current || !passwords.new || !passwords.confirm) {
       toast.error('Vui lòng điền đầy đủ thông tin');
       return;
@@ -900,8 +1034,33 @@ function PasswordTab() {
       return;
     }
 
-    toast.success('Mật khẩu đã được thay đổi thành công');
-    setPasswords({ current: '', new: '', confirm: '' });
+    setIsLoading(true);
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/auth/change-password`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          currentPassword: passwords.current,
+          newPassword: passwords.new
+        })
+      });
+
+      if (response.ok) {
+        toast.success('Mật khẩu đã được thay đổi thành công');
+        setPasswords({ current: '', new: '', confirm: '' });
+      } else {
+        const error = await response.json();
+        toast.error(error.message || 'Có lỗi xảy ra khi đổi mật khẩu');
+      }
+    } catch (error) {
+      console.error('Error changing password:', error);
+      toast.error('Có lỗi xảy ra khi đổi mật khẩu');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -943,8 +1102,8 @@ function PasswordTab() {
           />
         </div>
 
-        <Button onClick={handleChangePassword} className="w-full">
-          Đổi mật khẩu
+        <Button onClick={handleChangePassword} className="w-full" disabled={isLoading}>
+          {isLoading ? 'Đang đổi mật khẩu...' : 'Đổi mật khẩu'}
         </Button>
       </CardContent>
     </Card>

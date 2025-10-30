@@ -2,13 +2,22 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { User, Bell, Menu, X, Car, Bike } from 'lucide-react';
 import { Button } from './ui/button';
-import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Badge } from './ui/badge';
 import { NotificationModal } from './NotificationModal';
 
+interface User {
+  name?: string;
+  fullName?: string;
+  email?: string;
+  data?: {
+    name?: string;
+    email?: string;
+  };
+}
+
 interface HeaderProps {
-  user: any;
-  onAuth: (mode: string) => void;
+  user: User | null;
+  onAuth: (mode: 'login' | 'register' | 'forgot-password') => void;
   onLogout: () => void;
 }
 
@@ -111,14 +120,10 @@ export function Header({ user, onAuth, onLogout }: HeaderProps) {
                     onClick={() => setShowUserMenu(!showUserMenu)}
                     className="flex items-center space-x-2 px-2"
                   >
-                    <Avatar className="h-8 w-8">
-                      <AvatarImage src={user.user_metadata?.avatar} />
-                      <AvatarFallback>
-                        {user.user_metadata?.name?.charAt(0) || user.email?.charAt(0)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <span className="hidden md:block text-sm font-medium">
-                      {user.user_metadata?.name || user.email}
+                    {/* Hiển thị tên thay vì avatar */}
+                    <User className="h-5 w-5 text-gray-600" />
+                    <span className="text-sm font-medium">
+                      {user.fullName}
                     </span>
                   </Button>
 
