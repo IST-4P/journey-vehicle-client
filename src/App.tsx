@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { createClient } from '@supabase/supabase-js';
-import { Toaster } from 'sonner@2.0.3';
+import { Toaster } from 'sonner';
 import { Header } from './components/Header';
 import { Footer } from './components/Footer';
 import { HomePage } from './components/HomePage';
@@ -15,61 +14,95 @@ import { AboutUs } from './components/AboutUs';
 import { Contact } from './components/Contact';
 import { ChatWidget } from './components/ChatWidget';
 import { ComplaintDetail } from './components/ComplaintDetail';
-import { projectId, publicAnonKey } from './utils/supabase/info';
+import { setupTokenRefresh, clearTokenRefresh, logout } from './utils/auth';
+import { toast } from 'sonner';
 
-const supabase = createClient(
-  `https://${projectId}.supabase.co`,
-  publicAnonKey
-);
+interface User {
+  name?: string;
+  fullName?: string;
+  email?: string;
+  data?: {
+    name?: string;
+    email?: string;
+  };
+}
+
 
 export default function App() {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState<User | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [authMode, setAuthMode] = useState('login');
+  const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot-password'>('login');
   const [loading, setLoading] = useState(true);
+  const refreshIntervalRef = useRef<number | null>(null);
 
   useEffect(() => {
-    // Check for existing session
+    // Kiểm tra session bằng /user/profile
     const checkSession = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-          setUser(session.user);
+        const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ;
+        const res = await fetch(`${apiBaseUrl}/user/profile`, { 
+          method: 'GET',
+          credentials: 'include' 
+        });
+        
+        if (res.ok) {
+          const data = await res.json();
+          // Nếu lấy được profile, user đã đăng nhập
+          setUser(data.user || data.data || data);
+          
+          // Setup auto refresh token mỗi 5 phút
+          refreshIntervalRef.current = setupTokenRefresh(() => {
+            // Callback khi token hết hạn
+            toast.error('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
+            setUser(null);
+          });
+        } else {
+          // Nếu không lấy được profile, user chưa đăng nhập
+          console.log('No valid session found');
         }
       } catch (error) {
         console.error('Session check error:', error);
+        // Không cần hiển thị lỗi cho user
       } finally {
         setLoading(false);
       }
     };
-
+    
     checkSession();
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (session?.user) {
-          setUser(session.user);
-        } else {
-          setUser(null);
-        }
+    // Cleanup function
+    return () => {
+      if (refreshIntervalRef.current) {
+        clearTokenRefresh(refreshIntervalRef.current);
       }
-    );
-
-    return () => subscription.unsubscribe();
+    };
   }, []);
 
-  const handleAuth = (mode: string) => {
+  const handleAuth = (mode: 'login' | 'register' | 'forgot-password') => {
     setAuthMode(mode);
     setShowAuthModal(true);
   };
 
   const handleLogout = async () => {
     try {
-      await supabase.auth.signOut();
-      setUser(null);
+      // Gọi API đăng xuất backend
+      const success = await logout();
+      
+      if (success) {
+        // Clear refresh interval
+        if (refreshIntervalRef.current) {
+          clearTokenRefresh(refreshIntervalRef.current);
+          refreshIntervalRef.current = null;
+        }
+        
+        setUser(null);
+        toast.success('Đăng xuất thành công');
+      } else {
+        toast.error('Có lỗi khi đăng xuất');
+      }
     } catch (error) {
       console.error('Logout error:', error);
+      toast.error('Có lỗi khi đăng xuất');
     }
   };
 
@@ -122,9 +155,20 @@ export default function App() {
           <AuthModal 
             mode={authMode}
             onClose={() => setShowAuthModal(false)}
-            onSuccess={(user) => {
-              setUser(user);
+            onSuccess={(userData: unknown) => {
+              setUser(userData as User);
               setShowAuthModal(false);
+              
+              // Setup auto refresh token khi user đăng nhập thành công
+              if (refreshIntervalRef.current) {
+                clearTokenRefresh(refreshIntervalRef.current);
+              }
+              
+              refreshIntervalRef.current = setupTokenRefresh(() => {
+                // Callback khi token hết hạn
+                toast.error('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
+                setUser(null);
+              });
             }}
           />
         )}

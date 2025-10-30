@@ -1,41 +1,58 @@
 import React, { useState } from 'react';
-import { createClient } from '@supabase/supabase-js';
-import { X, Eye, EyeOff, ArrowLeft } from 'lucide-react';
+import { X, Eye, EyeOff } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
-import { InputOTP, InputOTPGroup, InputOTPSlot } from './ui/input-otp';
-import { toast } from 'sonner@2.0.3';
-import { projectId, publicAnonKey } from '../utils/supabase/info';
+import { toast } from 'sonner';
 
-const supabase = createClient(
-  `https://${projectId}.supabase.co`,
-  publicAnonKey
-);
 
 interface AuthModalProps {
   mode: 'login' | 'register' | 'forgot-password';
   onClose: () => void;
-  onSuccess: (user: any) => void;
+  onSuccess: (user: unknown) => void;
 }
 
 export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalProps) {
   const [mode, setMode] = useState(initialMode);
-  const [step, setStep] = useState(1); // 1: form, 2: OTP verification
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [otp, setOtp] = useState('');
+  const [otpSent, setOtpSent] = useState(false); 
+  const [otpLoading, setOtpLoading] = useState(false); 
+  const [otpVerified, setOtpVerified] = useState(false); 
   
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     phone: '',
     password: '',
-    confirmPassword: ''
+    confirmPassword: '',
+    newPassword: '',
+    confirmNewPassword: '',
+    code: '' // Đổi từ otp thành code
   });
 
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  const resetForm = () => {
+    setFormData({
+      name: '',
+      email: '',
+      phone: '',
+      password: '',
+      confirmPassword: '',
+      newPassword: '',
+      confirmNewPassword: '',
+      code: ''
+    });
+    setOtpSent(false);
+    setOtpVerified(false);
+  };
+
+  const switchMode = (newMode: 'login' | 'register' | 'forgot-password') => {
+    setMode(newMode);
+    resetForm();
   };
 
   const validateForm = () => {
@@ -46,6 +63,10 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
       }
       if (!formData.phone.trim()) {
         toast.error('Vui lòng nhập số điện thoại');
+        return false;
+      }
+      if (!formData.code.trim()) {
+        toast.error('Vui lòng nhập mã OTP');
         return false;
       }
       if (formData.password !== formData.confirmPassword) {
@@ -72,25 +93,128 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
     return true;
   };
 
+  // Function gửi OTP
+  const handleSendOTP = async () => {
+    if (!formData.email.trim()) {
+      toast.error('Vui lòng nhập email trước khi gửi OTP');
+      return;
+    }
+
+    setOtpLoading(true);
+    try {
+      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL;
+      const response = await fetch(`${apiBaseUrl}/auth/otp`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include', // Cho phép gửi và nhận cookies
+        body: JSON.stringify({
+          email: formData.email,
+          type: 'REGISTER'
+        })
+      });
+
+      const result = await response.json();
+      
+      if (!response.ok) {
+        console.error('Send OTP (Register) error response:', response.status, result); // Debug
+        const errorMessage = result.error || result.message || `Gửi OTP thất bại (${response.status})`;
+        toast.error(errorMessage);
+        return;
+      }
+
+      setOtpSent(true);
+      toast.success('Mã OTP đã được gửi đến email của bạn');
+    } catch (error) {
+      console.error('Send OTP error:', error);
+      toast.error('Đã xảy ra lỗi khi gửi OTP');
+    } finally {
+      setOtpLoading(false);
+    }
+  };
+
+  // Function gửi OTP cho forgot password
+  const handleSendForgotPasswordOTP = async () => {
+    if (!formData.email.trim()) {
+      toast.error('Vui lòng nhập email trước khi gửi OTP');
+      return;
+    }
+
+    setOtpLoading(true);
+    try {
+      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL;
+      const response = await fetch(`${apiBaseUrl}/auth/otp`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          email: formData.email,
+          type: 'FORGOT_PASSWORD'
+        })
+      });
+
+      const result = await response.json();
+      
+      if (!response.ok) {
+        console.error('Send OTP (Forgot Password) error response:', response.status, result); // Debug
+        const errorMessage = result.error || result.message || `Gửi OTP thất bại (${response.status})`;
+        toast.error(errorMessage);
+        return;
+      }
+
+      setOtpSent(true);
+      toast.success('Mã OTP đã được gửi đến email của bạn');
+    } catch (error) {
+      console.error('Send OTP error:', error);
+      toast.error('Đã xảy ra lỗi khi gửi OTP');
+    } finally {
+      setOtpLoading(false);
+    }
+  };
+
   const handleLogin = async () => {
     if (!validateForm()) return;
     
     setLoading(true);
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: formData.email,
-        password: formData.password,
+      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL;
+      const response = await fetch(`${apiBaseUrl}/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include', // Cho phép gửi và nhận cookies
+        body: JSON.stringify({
+          email: formData.email,
+          password: formData.password,
+        })
       });
 
-      if (error) {
-        toast.error('Đăng nhập thất bại: ' + error.message);
+      const result = await response.json();
+
+      if (!response.ok) {
+        console.error('Login error response:', response.status, result); // Debug
+        const errorMessage = result.error || result.message || `Đăng nhập thất bại (${response.status})`;
+        toast.error(errorMessage);
         return;
       }
 
-      if (data.user) {
-        toast.success('Đăng nhập thành công!');
-        onSuccess(data.user);
+      console.log('Login successful, user data:', result); // Debug
+      
+      // Lưu token vào localStorage nếu có
+      if (result.accessToken) {
+        localStorage.setItem('accessToken', result.accessToken);
       }
+      if (result.refreshToken) {
+        localStorage.setItem('refreshToken', result.refreshToken);
+      }
+      
+      toast.success('Đăng nhập thành công!');
+      onSuccess(result.data || result.user || result); // Fallback nếu không có result.user
+      onClose(); // Đóng modal sau khi login thành công
     } catch (error) {
       console.error('Login error:', error);
       toast.error('Đã xảy ra lỗi khi đăng nhập');
@@ -102,69 +226,47 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
   const handleRegister = async () => {
     if (!validateForm()) return;
     
+    // Kiểm tra xem đã có code OTP chưa
+    if (!formData.code.trim()) {
+      toast.error('Vui lòng nhập mã OTP');
+      return;
+    }
+    
     setLoading(true);
     try {
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-551107ff/auth/signup`, {
+      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL;
+      const response = await fetch(`${apiBaseUrl}/auth/register`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`
         },
+        credentials: 'include', // Cho phép gửi và nhận cookies
         body: JSON.stringify({
           email: formData.email,
           password: formData.password,
           name: formData.name,
-          phone: formData.phone
+          phone: formData.phone,
+          code: formData.code,
+          confirmPassword: formData.confirmPassword
         })
       });
 
       const result = await response.json();
       
       if (!response.ok) {
-        toast.error('Đăng ký thất bại: ' + result.error);
+        console.error('Register error response:', response.status, result); // Debug
+        const errorMessage = result.error || result.message || `Đăng ký thất bại (${response.status})`;
+        toast.error(errorMessage);
         return;
       }
 
-      // Simulate OTP verification step
-      setStep(2);
-      toast.success('Mã OTP đã được gửi đến email của bạn');
+      console.log('Register successful, user data:', result); // Debug
+      toast.success('Đăng ký thành công!');
+      onSuccess(result.user || result); // Fallback nếu không có result.user
+      onClose(); // Đóng modal sau khi đăng ký thành công
     } catch (error) {
       console.error('Register error:', error);
       toast.error('Đã xảy ra lỗi khi đăng ký');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleOTPVerification = async () => {
-    if (otp.length !== 6) {
-      toast.error('Vui lòng nhập đầy đủ mã OTP');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      // Simulate OTP verification (in real app, you would verify with backend)
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // After successful OTP verification, sign in the user
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: formData.email,
-        password: formData.password,
-      });
-
-      if (error) {
-        toast.error('Xác thực thất bại: ' + error.message);
-        return;
-      }
-
-      if (data.user) {
-        toast.success('Đăng ký thành công!');
-        onSuccess(data.user);
-      }
-    } catch (error) {
-      console.error('OTP verification error:', error);
-      toast.error('Đã xảy ra lỗi khi xác thực OTP');
     } finally {
       setLoading(false);
     }
@@ -176,20 +278,64 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
       return;
     }
 
+    if (!otpSent) {
+      // Bước 1: Gửi OTP
+      handleSendForgotPasswordOTP();
+      return;
+    }
+
+    // Bước 2: Xác thực OTP và đặt lại mật khẩu
+    if (!formData.code.trim()) {
+      toast.error('Vui lòng nhập mã OTP');
+      return;
+    }
+
+    if (!formData.newPassword.trim()) {
+      toast.error('Vui lòng nhập mật khẩu mới');
+      return;
+    }
+
+    if (formData.newPassword.length < 6) {
+      toast.error('Mật khẩu mới phải có ít nhất 6 ký tự');
+      return;
+    }
+
+    if (formData.newPassword !== formData.confirmNewPassword) {
+      toast.error('Mật khẩu xác nhận không khớp');
+      return;
+    }
+
     setLoading(true);
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(formData.email);
-      
-      if (error) {
-        toast.error('Gửi email thất bại: ' + error.message);
+      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL;
+      const response = await fetch(`${apiBaseUrl}/auth/forgot-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          email: formData.email,
+          code: formData.code,
+          newPassword: formData.newPassword,
+          confirmNewPassword: formData.confirmNewPassword
+        })
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        console.error('Reset password error response:', response.status, result); // Debug
+        const errorMessage = result.error || result.message || `Đặt lại mật khẩu thất bại (${response.status})`;
+        toast.error(errorMessage);
         return;
       }
 
-      toast.success('Email khôi phục mật khẩu đã được gửi!');
-      setMode('login');
+      toast.success('Đặt lại mật khẩu thành công!');
+      switchMode('login');
     } catch (error) {
-      console.error('Forgot password error:', error);
-      toast.error('Đã xảy ra lỗi khi gửi email khôi phục');
+      console.error('Reset password error:', error);
+      toast.error('Đã xảy ra lỗi khi đặt lại mật khẩu');
     } finally {
       setLoading(false);
     }
@@ -198,11 +344,6 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (step === 2) {
-      handleOTPVerification();
-      return;
-    }
-
     switch (mode) {
       case 'login':
         handleLogin();
@@ -216,8 +357,7 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
     }
   };
 
-  const getTitle = () => {
-    if (step === 2) return 'Xác thực OTP';
+  const getModalTitle = () => {
     switch (mode) {
       case 'login': return 'Đăng nhập';
       case 'register': return 'Đăng ký';
@@ -226,19 +366,26 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
     }
   };
 
+  const getTitle = () => {
+    switch (mode) {
+      case 'login': return 'Đăng nhập';
+      case 'register': return 'Đăng ký';
+      case 'forgot-password': 
+        if (!otpSent) return 'Gửi OTP';
+        return 'Đặt lại mật khẩu';
+      default: return '';
+    }
+  };
+
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-md relative">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* White background */}
+      <div className="absolute inset-0 bg-white"></div>
+
+      {/* Modal content */}
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-md relative z-10">
         <div className="flex items-center justify-between p-6 border-b">
-          {step === 2 && (
-            <button
-              onClick={() => setStep(1)}
-              className="p-1 hover:bg-gray-100 rounded"
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </button>
-          )}
-          <h2 className="text-xl font-semibold flex-1 text-center">{getTitle()}</h2>
+          <h2 className="text-xl font-semibold flex-1 text-center">{getModalTitle()}</h2>
           <button
             onClick={onClose}
             className="p-1 hover:bg-gray-100 rounded"
@@ -248,9 +395,8 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
         </div>
 
         <form onSubmit={handleSubmit} className="p-6">
-          {step === 1 ? (
-            <>
-              {mode === 'register' && (
+          <>
+            {mode === 'register' && (
                 <div className="space-y-4 mb-4">
                   <div>
                     <Label htmlFor="name">Họ và tên</Label>
@@ -280,15 +426,79 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
               <div className="space-y-4">
                 <div>
                   <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={formData.email}
-                    onChange={(e) => handleInputChange('email', e.target.value)}
-                    placeholder="Nhập email"
-                    className="mt-1"
-                  />
+                  <div className="flex gap-2 mt-1">
+                    <Input
+                      id="email"
+                      type="email"
+                      value={formData.email}
+                      onChange={(e) => handleInputChange('email', e.target.value)}
+                      placeholder="Nhập email"
+                      className="flex-1"
+                    />
+                    {(mode === 'register' || (mode === 'forgot-password' && !otpSent)) && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={mode === 'register' ? handleSendOTP : handleSendForgotPasswordOTP}
+                        disabled={otpLoading || !formData.email.trim()}
+                        className="whitespace-nowrap"
+                      >
+                        {otpLoading ? 'Đang gửi...' : otpSent ? 'Gửi lại OTP' : 'Gửi OTP'}
+                      </Button>
+                    )}
+                  </div>
                 </div>
+
+                {(mode === 'register' || (mode === 'forgot-password' && otpSent)) && (
+                  <div>
+                    <Label htmlFor="code">Mã OTP</Label>
+                    <Input
+                      id="code"
+                      type="text"
+                      value={formData.code}
+                      onChange={(e) => handleInputChange('code', e.target.value)}
+                      placeholder="Nhập mã OTP từ email"
+                      className="mt-1"
+                      maxLength={6}
+                    />
+                  </div>
+                )}
+
+                {(mode === 'forgot-password' && otpSent) && (
+                  <>
+                    <div>
+                      <Label htmlFor="newPassword">Mật khẩu mới</Label>
+                      <div className="relative mt-1">
+                        <Input
+                          id="newPassword"
+                          type={showPassword ? 'text' : 'password'}
+                          value={formData.newPassword}
+                          onChange={(e) => handleInputChange('newPassword', e.target.value)}
+                          placeholder="Nhập mật khẩu mới"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-3 top-1/2 transform -translate-y-1/2"
+                        >
+                          {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <Label htmlFor="confirmNewPassword">Xác nhận mật khẩu mới</Label>
+                      <div className="relative mt-1">
+                        <Input
+                          id="confirmNewPassword"
+                          type={showPassword ? 'text' : 'password'}
+                          value={formData.confirmNewPassword}
+                          onChange={(e) => handleInputChange('confirmNewPassword', e.target.value)}
+                          placeholder="Nhập lại mật khẩu mới"
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
 
                 {mode !== 'forgot-password' && (
                   <div>
@@ -338,7 +548,7 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
                     <span className="text-gray-600">Chưa có tài khoản? </span>
                     <button
                       type="button"
-                      onClick={() => setMode('register')}
+                      onClick={() => switchMode('register')}
                       className="text-blue-600 hover:underline"
                     >
                       Đăng ký ngay
@@ -346,7 +556,7 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
                     <br />
                     <button
                       type="button"
-                      onClick={() => setMode('forgot-password')}
+                      onClick={() => switchMode('forgot-password')}
                       className="text-blue-600 hover:underline mt-2"
                     >
                       Quên mật khẩu?
@@ -357,7 +567,7 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
                     <span className="text-gray-600">Đã có tài khoản? </span>
                     <button
                       type="button"
-                      onClick={() => setMode('login')}
+                      onClick={() => switchMode('login')}
                       className="text-blue-600 hover:underline"
                     >
                       Đăng nhập
@@ -367,7 +577,7 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
                   <>
                     <button
                       type="button"
-                      onClick={() => setMode('login')}
+                      onClick={() => switchMode('login')}
                       className="text-blue-600 hover:underline"
                     >
                       Quay lại đăng nhập
@@ -376,48 +586,6 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
                 )}
               </div>
             </>
-          ) : (
-            <div className="space-y-6">
-              <div className="text-center">
-                <p className="text-gray-600">
-                  Chúng tôi đã gửi mã OTP 6 số đến email:
-                </p>
-                <p className="font-medium text-gray-900 mt-1">{formData.email}</p>
-              </div>
-
-              <div className="flex justify-center">
-                <InputOTP 
-                  maxLength={6} 
-                  value={otp} 
-                  onChange={setOtp}
-                >
-                  <InputOTPGroup>
-                    <InputOTPSlot index={0} />
-                    <InputOTPSlot index={1} />
-                    <InputOTPSlot index={2} />
-                    <InputOTPSlot index={3} />
-                    <InputOTPSlot index={4} />
-                    <InputOTPSlot index={5} />
-                  </InputOTPGroup>
-                </InputOTP>
-              </div>
-
-              <Button type="submit" className="w-full" disabled={loading || otp.length !== 6}>
-                {loading ? 'Đang xác thực...' : 'Xác thực OTP'}
-              </Button>
-
-              <div className="text-center text-sm">
-                <span className="text-gray-600">Không nhận được mã? </span>
-                <button
-                  type="button"
-                  className="text-blue-600 hover:underline"
-                  onClick={() => toast.success('Mã OTP mới đã được gửi!')}
-                >
-                  Gửi lại
-                </button>
-              </div>
-            </div>
-          )}
         </form>
       </div>
     </div>
