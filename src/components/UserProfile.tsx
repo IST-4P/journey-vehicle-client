@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Routes, Route, Link, useLocation } from 'react-router-dom';
 import { 
   User, History, MapPin, CreditCard, MessageSquare, 
@@ -18,32 +18,61 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { toast } from 'sonner';
-import { uploadAvatarImage } from '../utils/imgbb';
+import { uploadAvatarImage, uploadLicenseImages } from '../utils/imgbb';
+
+// License class enum
+export const LicenseClassEnum = {
+  A1: 'A1',
+  A2: 'A2',
+  B1: 'B1',
+  B2: 'B2',
+  C: 'C',
+  D: 'D',
+  E: 'E',
+  F: 'F',
+} as const;
+
+export type LicenseClass = keyof typeof LicenseClassEnum;
 
 interface UserProfileProps {
-  user: any;
+  user: User;
 }
 
 export function UserProfile({ user }: UserProfileProps) {
   const location = useLocation();
-  const [selectedTab, setSelectedTab] = useState('account');
   const [currentUser, setCurrentUser] = useState(user);
+  const [driverLicense, setDriverLicense] = useState<Driver | null>(null);
 
-  // Function to refresh user data
-  const refreshUserData = async () => {
+  // Fetch driver_licenses for current user
+  const fetchDriverLicense = async () => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/user/profile`, {
-        credentials: 'include'
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/user/driver-license`, { 
+        credentials: 'include' 
       });
       
-      if (response.ok) {
-        const userData = await response.json();
-        setCurrentUser(userData);
+      if (!response.ok) {
+        if (response.status === 404) {
+          console.log('Driver license not found');
+          setDriverLicense(null);
+          return;
+        }
+        throw new Error(`HTTP ${response.status}`);
       }
+      
+      const json = await response.json();
+      // backend might return { data: {...} } or raw object
+      const payload = json.data || json;
+      setDriverLicense(payload);
     } catch (error) {
-      console.error('Error refreshing user data:', error);
+      console.error('Error fetching driver license:', error);
+      setDriverLicense(null);
     }
   };
+
+  useEffect(() => {
+    // load driver license when component mounts and when currentUser changes
+    fetchDriverLicense();
+  }, [currentUser?.email]);
 
   const sidebarItems = [
     { id: 'account', label: 'Tài khoản của tôi', icon: User, path: '/profile/account' },
@@ -70,9 +99,9 @@ export function UserProfile({ user }: UserProfileProps) {
                   </AvatarFallback>
                 </Avatar>
                 <h3 className="font-semibold">
-                  {currentUser.data?.fullName || currentUser.user_metadata?.name || currentUser.email}
+                  {currentUser.fullName}
                 </h3>
-                <p className="text-sm text-gray-600">{currentUser.data?.email || currentUser.email}</p>
+                <p className="text-sm text-gray-600">{currentUser.email}</p>
               </div>
               
               <nav className="space-y-1">
@@ -98,13 +127,13 @@ export function UserProfile({ user }: UserProfileProps) {
         {/* Main Content */}
         <div className="lg:col-span-3">
           <Routes>
-            <Route path="/account" element={<AccountTab user={currentUser} />} />
+            <Route path="/account" element={<AccountTab user={currentUser} driver={driverLicense} />} />
             <Route path="/history" element={<HistoryTab />} />
             <Route path="/addresses" element={<AddressesTab />} />
             <Route path="/payment" element={<PaymentTab />} />
             <Route path="/complaints" element={<ComplaintsTab />} />
             <Route path="/password" element={<PasswordTab />} />
-            <Route path="/" element={<AccountTab user={currentUser} />} />
+            <Route path="/" element={<AccountTab user={currentUser} driver={driverLicense} />} />
           </Routes>
         </div>
       </div>
@@ -121,24 +150,57 @@ interface User {
     facebook?: string;
     dateOfBirth?: string;
     verified?: boolean;
+    fullName?: string;
   };
+  creditScore?: number;
 }
 
-function AccountTab({ user }: { user: User }) {
+const formatDate = (dateString: string) : string =>{
+  return dateString.split('T')[0];
+};
+
+// Driver license type (adjust fields to match your DB)
+interface Driver {
+  id?: string;
+  userId?: string;
+  licenseNumber?: string;
+  fullName?: string;
+  dateOfBirth?: string;
+  frontImageUrl?: string;
+  backImageUrl?: string;
+  selfieImageUrl?: string;
+  isVerified?: boolean;
+  expiryDate?: string;
+  licenseClass?: string;
+  issueDate?: string;
+  issuePlace?: string;
+}
+
+function AccountTab({ user, driver }: { user: User; driver?: Driver | null }) {
   const [profileData, setProfileData] = useState({
     avatar: user.avatarUrl,
     phone: user.phone,
     email: user.email,
     facebook: user.data?.facebook || '',
-    drivingLicense: '',
-    licenseNumber: '',
-    fullName: user.fullName || '',
-    dateOfBirth: user.data?.dateOfBirth || '',
-    verified: user.data?.verified || false
+    drivingLicense: driver?.licenseNumber || '',
+    licenseNumber: driver?.licenseNumber || '',
+    fullName: user.fullName || driver?.fullName || '',
+    dateOfBirth: user.data?.dateOfBirth || driver?.dateOfBirth || '',
+    licenseClass: driver?.licenseClass || '',
+    issueDate: driver?.issueDate || '',
+    expiryDate: driver?.expiryDate || '',
+    issuePlace: driver?.issuePlace || '',
+    verified: user.data?.verified || driver?.isVerified || false,
+    creditScore: user.creditScore || 0
   });
-
+  
   const [showLicenseUpload, setShowLicenseUpload] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [licenseImages, setLicenseImages] = useState<{
+    front?: File;
+    back?: File;
+    selfie?: File;
+  }>({});
 
   const handleAvatarUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -180,6 +242,123 @@ function AccountTab({ user }: { user: User }) {
         toast.error(error.message);
       } else {
         toast.error('Có lỗi xảy ra khi tải ảnh lên');
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handle license image file selection
+  const handleLicenseImageSelect = (type: 'front' | 'back' | 'selfie') => (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setLicenseImages(prev => ({
+      ...prev,
+      [type]: file
+    }));
+
+    toast.success(`Đã chọn ảnh ${type === 'front' ? 'mặt trước' : type === 'back' ? 'mặt sau' : 'selfie'}`);
+  };
+
+  // Submit license verification
+  const handleSubmitLicense = async () => {
+    if (!profileData.licenseNumber.trim()) {
+      toast.error('Vui lòng nhập số giấy phép lái xe');
+      return;
+    }
+
+    if (!profileData.fullName.trim()) {
+      toast.error('Vui lòng nhập họ và tên');
+      return;
+    }
+
+    if (!profileData.dateOfBirth) {
+      toast.error('Vui lòng chọn ngày sinh');
+      return;
+    }
+
+    if (!licenseImages.front || !licenseImages.back) {
+      toast.error('Vui lòng tải lên ảnh mặt trước và mặt sau của GPLX');
+      return;
+    }
+
+    // Xác định method dựa trên việc có GPLX hiện tại không
+    const isUpdate = driver && driver.id;
+
+    setIsLoading(true);
+    try {
+      // Upload images to ImgBB
+      const imageUrls = await uploadLicenseImages(licenseImages, import.meta.env.VITE_IMGBB_API_KEY);
+      
+      // Prepare payload
+      const payload = {
+        licenseNumber: profileData.licenseNumber,
+        fullName: profileData.fullName,
+        dateOfBirth: profileData.dateOfBirth ? new Date(profileData.dateOfBirth).toISOString() : null,
+        licenseClass: profileData.licenseClass || null,
+        issueDate: profileData.issueDate ? new Date(profileData.issueDate).toISOString() : null,
+        expiryDate: profileData.expiryDate ? new Date(profileData.expiryDate).toISOString() : null,
+        issuePlace: profileData.issuePlace || null,
+        frontImageUrl: imageUrls.front,
+        backImageUrl: imageUrls.back,
+        selfieImageUrl: imageUrls.selfie
+      };
+
+      console.log('Sending license payload:', payload);
+      
+      // Submit license data to backend
+      const method = isUpdate ? 'PUT' : 'POST';
+      
+      // Submit license data to backend
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/user/driver-license`, {
+        method: method,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify(payload)
+      });
+
+      console.log('Response status:', response.status);
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log('Success response:', result);
+        const successMessage = isUpdate 
+          ? 'Đã cập nhật GPLX thành công!' 
+          : 'Đã gửi yêu cầu xác thực GPLX thành công!';
+        toast.success(successMessage);
+        setShowLicenseUpload(false);
+        setLicenseImages({});
+        // Trigger parent component refresh
+        window.location.reload();
+      } else {
+        const errorData = await response.text(); // Use text() first to see raw response
+        console.error('Error response text:', errorData);
+        
+        const defaultErrorMessage = isUpdate 
+          ? 'Cập nhật GPLX thất bại' 
+          : 'Gửi yêu cầu xác thực thất bại';
+        let errorMessage = defaultErrorMessage;
+        try {
+          const parsedError = JSON.parse(errorData);
+          errorMessage = parsedError.error || parsedError.message || parsedError.details || errorMessage;
+        } catch {
+          errorMessage = `Server error (${response.status}): ${errorData || 'Unknown error'}`;
+        }
+        
+        toast.error(errorMessage);
+      }
+    } catch (error) {
+      console.error('Error submitting license:', error);
+      if (error instanceof Error) {
+        toast.error(error.message);
+      } else {
+        const errorMessage = isUpdate 
+          ? 'Có lỗi xảy ra khi cập nhật GPLX' 
+          : 'Có lỗi xảy ra khi gửi yêu cầu xác thực';
+        toast.error(errorMessage);
       }
     } finally {
       setIsLoading(false);
@@ -313,7 +492,7 @@ function AccountTab({ user }: { user: User }) {
         {/* Driving License */}
         <div>
           <Label>Giấy phép lái xe</Label>
-          {!profileData.verified ? (
+          {!profileData.verified && !driver ? (
             <div className="mt-2">
               <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
                 <Upload className="h-8 w-8 text-gray-400 mx-auto mb-2" />
@@ -323,6 +502,48 @@ function AccountTab({ user }: { user: User }) {
                 <Button onClick={() => setShowLicenseUpload(true)}>
                   Tải lên giấy phép
                 </Button>
+              </div>
+            </div>
+          ) : driver ? (
+            <div className="mt-2 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  {!driver.isVerified && (
+                    <div className="text-red-600">Chưa xác thực</div>
+                  )}
+                  {driver.isVerified && (
+                    <div className="text-green-600">Đã xác thực</div>
+                  )}
+                </div>
+                {/* Nút cập nhật GPLX - chỉ hiển thị khi chưa xác thực */}
+                {!driver.isVerified && (
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => setShowLicenseUpload(true)}
+                  >
+                    Cập nhật GPLX
+                  </Button>
+                )}
+              </div>
+              <div className="bg-gray-50 p-4 rounded-lg space-y-2">
+                <div><strong>Số GPLX:</strong> {driver.licenseNumber}</div>
+                <div><strong>Họ tên:</strong> {driver.fullName}</div>
+                <div><strong>Ngày sinh:</strong> {formatDate(driver.dateOfBirth!)}</div>
+                {driver.expiryDate && (
+                  <div><strong>Ngày hết hạn:</strong> {formatDate(driver.expiryDate)}</div>
+                )}
+                <div className="flex space-x-2 mt-2">
+                  {driver.frontImageUrl && (
+                    <img src={driver.frontImageUrl} alt="GPLX mặt trước" className="w-20 h-20 object-cover rounded" />
+                  )}
+                  {driver.backImageUrl && (
+                    <img src={driver.backImageUrl} alt="GPLX mặt sau" className="w-20 h-20 object-cover rounded" />
+                  )}
+                  {driver.selfieImageUrl && (
+                    <img src={driver.selfieImageUrl} alt="Selfie" className="w-20 h-20 object-cover rounded" />
+                  )}
+                </div>
               </div>
             </div>
           ) : (
@@ -337,11 +558,18 @@ function AccountTab({ user }: { user: User }) {
         <div>
           <Label>Điểm tín nhiệm</Label>
           <div className="mt-2 flex items-center space-x-4">
-            <div className="text-2xl font-bold text-blue-600">100</div>
+            <div className="text-2xl font-bold text-blue-600">{user.creditScore || 0}</div>
             <div className="flex-1 bg-gray-200 rounded-full h-2">
-              <div className="bg-blue-600 h-2 rounded-full" style={{ width: '100%' }}></div>
+                    <div 
+                      className="bg-blue-600 h-2 rounded-full" 
+                      style={{ width: `${Math.min(user.creditScore || 0, 100)}%` }}
+                    ></div>
             </div>
-            <span className="text-sm text-gray-600">Xuất sắc</span>
+            <span className="text-sm text-gray-600">
+              {user.creditScore! >=80 ? 'Xuất sắc' :
+               user.creditScore! >= 60 ? 'Tốt' :
+               user.creditScore! >= 40 ? 'Trung bình' : 'Yếu'}
+            </span>
           </div>
         </div>
 
@@ -351,16 +579,33 @@ function AccountTab({ user }: { user: User }) {
 
         {/* License Upload Modal */}
         <Dialog open={showLicenseUpload} onOpenChange={setShowLicenseUpload}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Xác thực giấy phép lái xe</DialogTitle>
+          <DialogContent 
+            className="max-w-2xl flex flex-col" 
+            style={{ 
+              height: '90vh', 
+              maxHeight: '90vh',
+              overflow: 'hidden'
+            }}
+          >
+            <DialogHeader className="flex-shrink-0">
+              <DialogTitle>
+                {driver && driver.id ? 'Cập nhật giấy phép lái xe' : 'Xác thực giấy phép lái xe'}
+              </DialogTitle>
             </DialogHeader>
-            <div className="space-y-4">
+            <div 
+              className="flex-1 space-y-4 pr-2" 
+              style={{ 
+                overflowY: 'scroll',
+                maxHeight: 'calc(90vh - 120px)',
+                scrollbarWidth: 'thin',
+                scrollbarColor: '#888 #f1f1f1'
+              }}
+            >
               <div>
                 <Label htmlFor="licenseNumber">Số giấy phép lái xe</Label>
                 <Input
                   id="licenseNumber"
-                  value={profileData.licenseNumber}
+                  value={driver?.licenseNumber || profileData.licenseNumber}
                   onChange={(e) => setProfileData({...profileData, licenseNumber: e.target.value})}
                   className="mt-1"
                 />
@@ -369,7 +614,7 @@ function AccountTab({ user }: { user: User }) {
                 <Label htmlFor="licenseFullName">Họ và tên (trên GPLX)</Label>
                 <Input
                   id="licenseFullName"
-                  value={profileData.fullName}
+                  value={driver?.fullName || profileData.fullName}
                   onChange={(e) => setProfileData({...profileData, fullName: e.target.value})}
                   className="mt-1"
                 />
@@ -379,22 +624,153 @@ function AccountTab({ user }: { user: User }) {
                 <Input
                   id="dateOfBirth"
                   type="date"
-                  value={profileData.dateOfBirth}
+                  value={(driver?.dateOfBirth ? driver.dateOfBirth.slice(0,10) : (profileData.dateOfBirth ? profileData.dateOfBirth.slice(0,10) : ''))}
                   onChange={(e) => setProfileData({...profileData, dateOfBirth: e.target.value})}
                   className="mt-1"
                 />
               </div>
               <div>
+                <Label htmlFor="licenseClass">Hạng GPLX</Label>
+                <Select
+                  value={driver?.licenseClass || profileData.licenseClass}
+                  onValueChange={(value: string) => setProfileData({ ...profileData, licenseClass: value })}
+                >
+                  <SelectTrigger className="mt-1">
+                    <SelectValue placeholder="Chọn hạng GPLX" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.values(LicenseClassEnum).map((licenseClass) => (
+                      <SelectItem key={licenseClass} value={licenseClass}>
+                        {licenseClass}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="issueDate">Ngày cấp</Label>
+                <Input
+                  id="issueDate"
+                  type="date"
+                  value={(driver?.issueDate ? driver.issueDate.slice(0,10) : (profileData.issueDate ? profileData.issueDate.slice(0,10) : ''))}
+                  onChange={(e) => setProfileData({...profileData, issueDate: e.target.value})}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label htmlFor="expiryDate">Ngày hết hạn</Label>
+                <Input
+                  id="expiryDate"
+                  type="date"
+                  value={(driver?.expiryDate ? driver.expiryDate.slice(0,10) : (profileData.expiryDate ? profileData.expiryDate.slice(0,10) : ''))}
+                  onChange={(e) => setProfileData({...profileData, expiryDate: e.target.value})}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label htmlFor="issuePlace">Nơi cấp</Label>
+                <Input
+                  id="issuePlace"
+                  value={driver?.issuePlace || profileData.issuePlace}
+                  onChange={(e) => setProfileData({...profileData, issuePlace: e.target.value})}
+                  placeholder="Ví dụ: Sở Giao thông Vận tải Hà Nội"
+                  className="mt-1"
+                />
+              </div>
+              <div>
                 <Label>Ảnh giấy phép lái xe</Label>
-                <div className="mt-2 border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
-                  <Upload className="h-8 w-8 text-gray-400 mx-auto mb-2" />
-                  <p className="text-sm text-gray-600">Tải lên ảnh GPLX (mặt trước và sau)</p>
-                  <Button variant="outline" size="sm" className="mt-2">
-                    Chọn file
-                  </Button>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+                  {/* Front Image */}
+                  <div>
+                    <Label className="text-sm font-medium">Mặt trước GPLX *</Label>
+                    <div className="mt-1 border-2 border-dashed border-gray-300 rounded-lg p-3 text-center">
+                      <Upload className="h-5 w-5 text-gray-400 mx-auto mb-1" />
+                      <p className="text-xs text-gray-600 mb-2 truncate">
+                        {licenseImages.front ? licenseImages.front.name : 'Chọn ảnh mặt trước'}
+                      </p>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleLicenseImageSelect('front')}
+                        style={{ display: 'none' }}
+                        id="front-image-upload"
+                      />
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => document.getElementById('front-image-upload')?.click()}
+                        className="text-xs px-2 py-1 h-7"
+                      >
+                        {licenseImages.front ? 'Thay đổi' : 'Chọn file'}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Back Image */}
+                  <div>
+                    <Label className="text-sm font-medium">Mặt sau GPLX *</Label>
+                    <div className="mt-1 border-2 border-dashed border-gray-300 rounded-lg p-3 text-center">
+                      <Upload className="h-5 w-5 text-gray-400 mx-auto mb-1" />
+                      <p className="text-xs text-gray-600 mb-2 truncate">
+                        {licenseImages.back ? licenseImages.back.name : 'Chọn ảnh mặt sau'}
+                      </p>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleLicenseImageSelect('back')}
+                        style={{ display: 'none' }}
+                        id="back-image-upload"
+                      />
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => document.getElementById('back-image-upload')?.click()}
+                        className="text-xs px-2 py-1 h-7"
+                      >
+                        {licenseImages.back ? 'Thay đổi' : 'Chọn file'}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Selfie Image - Full width */}
+                <div className="mt-4">
+                  <Label className="text-sm font-medium">Ảnh selfie với GPLX (tùy chọn)</Label>
+                  <div className="mt-1 border-2 border-dashed border-gray-300 rounded-lg p-3 text-center max-w-md mx-auto">
+                    <Upload className="h-5 w-5 text-gray-400 mx-auto mb-1" />
+                    <p className="text-xs text-gray-600 mb-2 truncate">
+                      {licenseImages.selfie ? licenseImages.selfie.name : 'Chọn ảnh selfie'}
+                    </p>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleLicenseImageSelect('selfie')}
+                      style={{ display: 'none' }}
+                      id="selfie-image-upload"
+                    />
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => document.getElementById('selfie-image-upload')?.click()}
+                      className="text-xs px-2 py-1 h-7"
+                    >
+                      {licenseImages.selfie ? 'Thay đổi' : 'Chọn file'}
+                    </Button>
+                  </div>
                 </div>
               </div>
-              <Button className="w-full">Gửi xác thực</Button>
+            </div>
+            <div className="flex-shrink-0 pt-4 border-t">
+              <Button 
+                className="w-full" 
+                onClick={handleSubmitLicense}
+                disabled={isLoading}
+              >
+                {isLoading 
+                  ? (driver && driver.id ? 'Đang cập nhật...' : 'Đang gửi...') 
+                  : (driver && driver.id ? 'Cập nhật GPLX' : 'Gửi xác thực')
+                }
+              </Button>
             </div>
           </DialogContent>
         </Dialog>
@@ -606,6 +982,7 @@ function HistoryTab() {
   );
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function RatingForm({ bookingId }: { bookingId: string }) {
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState('');
@@ -675,7 +1052,7 @@ function RatingForm({ bookingId }: { bookingId: string }) {
 }
 
 function AddressesTab() {
-  const [addresses, setAddresses] = useState([
+  const [addresses] = useState([
     {
       id: '1',
       type: 'home',

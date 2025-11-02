@@ -128,7 +128,8 @@ export default function App() {
             <Route path="/" element={<HomePage />} />
             <Route path="/cars" element={<CarRental />} />
             <Route path="/motorcycles" element={<MotorcycleRental />} />
-            <Route path="/vehicle/:type/:id" element={<VehicleDetail />} />
+            
+            <Route path="/vehicle/:id" element={<VehicleDetail />} />
             <Route path="/booking/:vehicleId" element={<BookingProcess />} />
             <Route path="/about" element={<AboutUs />} />
             <Route path="/contact" element={<Contact />} />

@@ -130,7 +130,63 @@ export function getImageUrls(imgbbResponse: ImgBBResponse): ImageUrls {
 export async function uploadAvatarImage(file: File, apiKey: string): Promise<string> {
   const result = await uploadToImgBB(file, apiKey);
   const urls = getImageUrls(result);
-  
+
   // Return medium size for avatars, fallback to display URL
   return urls.medium || urls.display || urls.original;
+}
+
+/**
+ * Upload driver license image and get URL
+ * @param file - The license image file to upload
+ * @param apiKey - ImgBB API key
+ * @returns The URL for license image display
+ */
+export async function uploadLicenseImage(file: File, apiKey: string): Promise<string> {
+  const result = await uploadToImgBB(file, apiKey);
+  const urls = getImageUrls(result);
+
+  // Return display URL for license images
+  return urls.display || urls.original;
+}
+
+/**
+ * Upload multiple license images (front, back, selfie)
+ * @param files - Object containing license image files
+ * @param apiKey - ImgBB API key
+ * @returns Object containing URLs for each image type
+ */
+export async function uploadLicenseImages(
+  files: {
+    front?: File;
+    back?: File;
+    selfie?: File;
+  },
+  apiKey: string
+): Promise<{
+  front?: string;
+  back?: string;
+  selfie?: string;
+}> {
+  const result: {
+    front?: string;
+    back?: string;
+    selfie?: string;
+  } = {};
+
+  // Upload front image
+  if (files.front) {
+    result.front = await uploadLicenseImage(files.front, apiKey);
+  }
+
+  // Upload back image
+  if (files.back) {
+    result.back = await uploadLicenseImage(files.back, apiKey);
+  }
+
+  // Upload selfie image
+  if (files.selfie) {
+    result.selfie = await uploadLicenseImage(files.selfie, apiKey);
+  }
+
+  return result;
 }
