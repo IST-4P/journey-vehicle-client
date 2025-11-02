@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { 
-  MapPin, Users, Fuel, Star, Heart, Share2, Calendar, Clock,
-  Shield, Check, X, ArrowLeft, ChevronLeft, ChevronRight, ZoomIn
+  MapPin, Users, Fuel, Star, Heart, Share2,
+  Check, X, ChevronLeft, ChevronRight, ZoomIn
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
@@ -13,43 +13,51 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
 import { Checkbox } from './ui/checkbox';
 import { ImageWithFallback } from './figma/ImageWithFallback';
-import { toast } from 'sonner@2.0.3';
-import { projectId, publicAnonKey } from '../utils/supabase/info';
+import { toast } from 'sonner';
+
+interface Discount {
+  code: string;
+  discount: number;
+  description: string;
+}
+
+interface VehicleFeature {
+  feature: {
+    name: string;
+    description: string;
+    icon: string;
+  };
+}
 
 interface Vehicle {
   id: string;
   type: string;
   name: string;
-  brand: string;
-  model: string;
-  transmission?: string;
-  engineType?: string;
+  brandId: string;
+  modelId: string;
   seats: number;
-  fuel: string;
-  consumption: string;
+  fuelType: string;
+  transmission: string;
   pricePerHour: number;
   pricePerDay: number;
   location: string;
-  coordinates: { lat: number; lng: number };
-  images: string[];
+  city: string;
+  ward: string;
+  latitude: number;
+  longitude: number;
   description: string;
-  amenities?: string[];
-  available: boolean;
-  rating: number;
-  reviewCount: number;
-}
-
-interface Review {
-  id: string;
-  userName: string;
-  userAvatar: string;
-  rating: number;
-  comment: string;
-  date: string;
+  terms: string[];
+  status: string;
+  totalTrips: number;
+  averageRating: number;
+  images: string[];
+  vehicleFeatures: VehicleFeature[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export function VehicleDetail() {
-  const { type, id } = useParams();
+  const { id } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [vehicle, setVehicle] = useState<Vehicle | null>(null);
@@ -60,7 +68,8 @@ export function VehicleDetail() {
   const [isFavorite, setIsFavorite] = useState(false);
   const [insurance, setInsurance] = useState(false);
   const [discountCode, setDiscountCode] = useState('');
-  const [appliedDiscount, setAppliedDiscount] = useState<any>(null);
+  const [appliedDiscount, setAppliedDiscount] = useState<Discount | null>(null);
+  const [isImageHovered, setIsImageHovered] = useState(false);
   const [rentalDuration, setRentalDuration] = useState<{
     startDate: string;
     startTime: string;
@@ -69,25 +78,6 @@ export function VehicleDetail() {
     hours: number;
   } | null>(null);
 
-  const reviews: Review[] = [
-    {
-      id: '1',
-      userName: 'Nguyễn Văn A',
-      userAvatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=64&h=64&fit=crop&crop=face',
-      rating: 5,
-      comment: 'Xe rất sạch sẽ và chạy êm. Dịch vụ tuyệt vời!',
-      date: '2024-01-15'
-    },
-    {
-      id: '2',
-      userName: 'Trần Thị B',
-      userAvatar: 'https://images.unsplash.com/photo-1494790108755-2616b612b786?w=64&h=64&fit=crop&crop=face',
-      rating: 4,
-      comment: 'Giá cả hợp lý, thủ tục nhanh gọn.',
-      date: '2024-01-10'
-    }
-  ];
-
   const availableDiscounts = [
     { code: 'NEWUSER', discount: 15, description: 'Giảm 15% cho khách hàng mới' },
     { code: 'WEEKEND20', discount: 20, description: 'Giảm 20% cho thuê cuối tuần' },
@@ -95,7 +85,33 @@ export function VehicleDetail() {
   ];
 
   useEffect(() => {
-    fetchVehicleDetail();
+    const fetchVehicleDetailCallback = async () => {
+      setLoading(true);
+      try {
+        const response = await fetch(
+          `${import.meta.env.VITE_API_BASE_URL}/vehicle/${id}`,
+          {
+            credentials: 'include'
+          }
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          // Parse response data properly
+          setVehicle(data.data || data.vehicle || data);
+        } else {
+          toast.error('Không tìm thấy thông tin xe');
+          navigate('/');
+        }
+      } catch (error) {
+        console.error('Error fetching vehicle:', error);
+        toast.error('Lỗi khi tải thông tin xe');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchVehicleDetailCallback();
     
     // Get rental duration from URL params
     const startDate = searchParams.get('startDate');
@@ -120,7 +136,18 @@ export function VehicleDetail() {
         });
       }
     }
-  }, [id, searchParams]);
+  }, [id, searchParams, navigate]);
+
+  // Auto-slide effect for images
+  useEffect(() => {
+    if (!vehicle || vehicle.images.length <= 1 || isImageHovered) return;
+
+    const interval = setInterval(() => {
+      setCurrentImageIndex((prev) => (prev + 1) % vehicle.images.length);
+    }, 3000); // Auto-slide every 3 seconds
+
+    return () => clearInterval(interval);
+  }, [vehicle, isImageHovered]);
 
   // Keyboard navigation for fullscreen modal
   useEffect(() => {
@@ -130,11 +157,11 @@ export function VehicleDetail() {
       switch (e.key) {
         case 'ArrowLeft':
           e.preventDefault();
-          prevImage();
+          setCurrentImageIndex((prev) => (prev - 1 + vehicle.images.length) % vehicle.images.length);
           break;
         case 'ArrowRight':
           e.preventDefault();
-          nextImage();
+          setCurrentImageIndex((prev) => (prev + 1) % vehicle.images.length);
           break;
         case 'Escape':
           e.preventDefault();
@@ -156,33 +183,6 @@ export function VehicleDetail() {
       document.body.style.overflow = 'unset';
     };
   }, [showImageModal, vehicle]);
-
-  const fetchVehicleDetail = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-551107ff/vehicles/${id}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${publicAnonKey}`
-          }
-        }
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        setVehicle(data.vehicle);
-      } else {
-        toast.error('Không tìm thấy thông tin xe');
-        navigate('/');
-      }
-    } catch (error) {
-      console.error('Error fetching vehicle:', error);
-      toast.error('Lỗi khi tải thông tin xe');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('vi-VN', {
@@ -206,7 +206,7 @@ export function VehicleDetail() {
     return subtotal - discountAmount;
   };
 
-  const handleApplyDiscount = (discount: any) => {
+  const handleApplyDiscount = (discount: Discount) => {
     setAppliedDiscount(discount);
     setDiscountCode(discount.code);
     setShowDiscountModal(false);
@@ -252,7 +252,7 @@ export function VehicleDetail() {
         <div className="text-center">
           <h2 className="text-2xl font-bold text-gray-900 mb-2">Không tìm thấy xe</h2>
           <p className="text-gray-600 mb-4">Xe bạn tìm kiếm không tồn tại hoặc đã bị xóa.</p>
-          <Link to={type === 'car' ? '/cars' : '/motorcycles'}>
+          <Link to="/cars">
             <Button>Quay lại danh sách</Button>
           </Link>
         </div>
@@ -261,13 +261,22 @@ export function VehicleDetail() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <>
+      <style>
+        {`
+          @keyframes progress {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(0%); }
+          }
+        `}
+      </style>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Breadcrumb */}
       <div className="flex items-center space-x-2 text-sm text-gray-600 mb-6">
         <Link to="/" className="hover:text-blue-600">Trang chủ</Link>
         <span>/</span>
-        <Link to={type === 'car' ? '/cars' : '/motorcycles'} className="hover:text-blue-600">
-          {type === 'car' ? 'Thuê ô tô' : 'Thuê xe máy'}
+        <Link to={vehicle.type === 'CAR' ? '/cars' : '/motorcycles'} className="hover:text-blue-600">
+          {vehicle.type === 'CAR' ? 'Thuê ô tô' : 'Thuê xe máy'}
         </Link>
         <span>/</span>
         <span className="text-gray-900">{vehicle.name}</span>
@@ -278,11 +287,15 @@ export function VehicleDetail() {
         <div className="lg:col-span-2">
           {/* Image Gallery */}
           <div className="mb-8">
-            <div className="relative">
+            <div 
+              className="relative"
+              onMouseEnter={() => setIsImageHovered(true)}
+              onMouseLeave={() => setIsImageHovered(false)}
+            >
               <ImageWithFallback
                 src={vehicle.images[currentImageIndex]}
                 alt={vehicle.name}
-                className="w-full h-80 object-cover rounded-lg cursor-pointer"
+                className="w-full h-96 md:h-[28rem] lg:h-[32rem] object-cover rounded-lg cursor-pointer shadow-lg transition-transform duration-300 hover:scale-[1.02]"
                 onClick={() => setShowImageModal(true)}
               />
               
@@ -305,24 +318,58 @@ export function VehicleDetail() {
 
               <button
                 onClick={() => setShowImageModal(true)}
-                className="absolute top-4 right-4 bg-black bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-70"
+                className="absolute top-4 right-4 bg-black bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-70 transition-all duration-200"
               >
                 <ZoomIn className="h-5 w-5" />
               </button>
+
+              {/* Auto-slide progress indicator */}
+              {vehicle.images.length > 1 && !isImageHovered && (
+                <div className="absolute bottom-4 left-4 right-4">
+                  <div className="w-full bg-black bg-opacity-30 h-1 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-white rounded-full transition-all duration-100 ease-linear"
+                      style={{
+                        width: '100%',
+                        animation: 'progress 3s linear infinite'
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Thumbnail Images */}
             {vehicle.images.length > 1 && (
-              <div className="flex space-x-2 mt-4 overflow-x-auto">
+              <div className="flex space-x-3 mt-4 overflow-x-auto pb-2">
                 {vehicle.images.map((image, index) => (
                   <ImageWithFallback
                     key={index}
                     src={image}
                     alt={`${vehicle.name} ${index + 1}`}
-                    className={`w-20 h-20 object-cover rounded cursor-pointer flex-shrink-0 ${
-                      index === currentImageIndex ? 'ring-2 ring-blue-600' : ''
+                    className={`w-24 h-16 object-cover rounded-lg cursor-pointer flex-shrink-0 transition-all duration-200 hover:scale-105 ${
+                      index === currentImageIndex 
+                        ? 'ring-2 ring-blue-600 ring-offset-2 shadow-md' 
+                        : 'hover:ring-2 hover:ring-gray-300'
                     }`}
                     onClick={() => setCurrentImageIndex(index)}
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* Image indicator dots */}
+            {vehicle.images.length > 1 && (
+              <div className="flex justify-center space-x-2 mt-3">
+                {vehicle.images.map((_, index) => (
+                  <button
+                    key={index}
+                    onClick={() => setCurrentImageIndex(index)}
+                    className={`w-2 h-2 rounded-full transition-all duration-200 ${
+                      index === currentImageIndex 
+                        ? 'bg-blue-600 w-6' 
+                        : 'bg-gray-300 hover:bg-gray-400'
+                    }`}
                   />
                 ))}
               </div>
@@ -341,11 +388,11 @@ export function VehicleDetail() {
                 <div className="flex items-center">
                   <div className="flex items-center mr-4">
                     <Star className="h-5 w-5 text-yellow-400 fill-current mr-1" />
-                    <span className="font-medium">{vehicle.rating}</span>
-                    <span className="text-gray-600 ml-1">({vehicle.reviewCount} đánh giá)</span>
+                    <span className="font-medium">{vehicle.averageRating || 0}</span>
+                    <span className="text-gray-600 ml-1">({vehicle.totalTrips} chuyến)</span>
                   </div>
-                  <Badge variant={vehicle.available ? "default" : "secondary"}>
-                    {vehicle.available ? 'Có sẵn' : 'Đã được thuê'}
+                  <Badge variant={vehicle.status === 'AVAILABLE' ? "default" : "secondary"}>
+                    {vehicle.status === 'AVAILABLE' ? 'Có sẵn' : vehicle.status === 'RESERVED' ? 'Đã đặt' : 'Không có sẵn'}
                   </Badge>
                 </div>
               </div>
@@ -371,18 +418,12 @@ export function VehicleDetail() {
               </div>
               <div className="flex items-center space-x-2">
                 <Fuel className="h-5 w-5 text-gray-400" />
-                <span>{vehicle.consumption}</span>
+                <span>{vehicle.fuelType === 'GASOLINE' ? 'Xăng' : vehicle.fuelType === 'DIESEL' ? 'Dầu diesel' : vehicle.fuelType}</span>
               </div>
               {vehicle.transmission && (
                 <div className="flex items-center space-x-2">
                   <span className="text-gray-400">⚙️</span>
-                  <span>{vehicle.transmission === 'automatic' ? 'Số tự động' : 'Số sàn'}</span>
-                </div>
-              )}
-              {vehicle.engineType && (
-                <div className="flex items-center space-x-2">
-                  <span className="text-gray-400">🏍️</span>
-                  <span>{vehicle.engineType}</span>
+                  <span>{vehicle.transmission === 'AUTOMATIC' ? 'Số tự động' : 'Số sàn'}</span>
                 </div>
               )}
             </div>
@@ -400,12 +441,15 @@ export function VehicleDetail() {
             </TabsList>
 
             <TabsContent value="amenities" className="mt-6">
-              {vehicle.amenities && vehicle.amenities.length > 0 ? (
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                  {vehicle.amenities.map((amenity, index) => (
-                    <div key={index} className="flex items-center space-x-2">
-                      <Check className="h-4 w-4 text-green-500" />
-                      <span>{amenity}</span>
+              {vehicle.vehicleFeatures && vehicle.vehicleFeatures.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {vehicle.vehicleFeatures.map((feature, index) => (
+                    <div key={index} className="flex items-start space-x-3 p-3 bg-gray-50 rounded-lg">
+                      <Check className="h-5 w-5 text-green-500 mt-1 flex-shrink-0" />
+                      <div>
+                        <h4 className="font-medium text-gray-900">{feature.feature.name}</h4>
+                        <p className="text-sm text-gray-600 mt-1">{feature.feature.description}</p>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -416,29 +460,18 @@ export function VehicleDetail() {
 
             <TabsContent value="reviews" className="mt-6">
               <div className="space-y-4">
-                {reviews.map((review) => (
-                  <div key={review.id} className="border-b border-gray-200 pb-4">
-                    <div className="flex items-start space-x-3">
-                      <ImageWithFallback
-                        src={review.userAvatar}
-                        alt={review.userName}
-                        className="w-10 h-10 rounded-full"
-                      />
-                      <div className="flex-1">
-                        <div className="flex items-center justify-between mb-1">
-                          <h4 className="font-medium">{review.userName}</h4>
-                          <span className="text-sm text-gray-500">{review.date}</span>
-                        </div>
-                        <div className="flex items-center mb-2">
-                          {[...Array(review.rating)].map((_, i) => (
-                            <Star key={i} className="h-4 w-4 text-yellow-400 fill-current" />
-                          ))}
-                        </div>
-                        <p className="text-gray-600">{review.comment}</p>
-                      </div>
-                    </div>
+                <div className="text-center py-8">
+                  <div className="flex items-center justify-center mb-4">
+                    <Star className="h-12 w-12 text-yellow-400 fill-current" />
                   </div>
-                ))}
+                  <h3 className="text-lg font-medium mb-2">Đánh giá</h3>
+                  <p className="text-gray-600 mb-4">
+                    Xe này có {vehicle.averageRating || 0}/5 sao với {vehicle.totalTrips} chuyến đã hoàn thành
+                  </p>
+                  <p className="text-sm text-gray-500">
+                    Đánh giá chi tiết sẽ được hiển thị sau khi có khách hàng thuê xe
+                  </p>
+                </div>
               </div>
             </TabsContent>
 
@@ -468,16 +501,26 @@ export function VehicleDetail() {
 
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-lg">Quy định</CardTitle>
+                    <CardTitle className="text-lg">Điều khoản và quy định</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <ul className="space-y-2 text-sm text-gray-600">
-                      <li>• Phải có giấy phép lái xe hợp lệ</li>
-                      <li>• Không sử dụng rượu bia khi lái xe</li>
-                      <li>• Trả xe đúng giờ và địa điểm đã thỏa thuận</li>
-                      <li>• Chịu trách nhiệm về các vi phạm giao thông</li>
-                      <li>• Bồi thường thiệt hại nếu có</li>
-                    </ul>
+                    {vehicle.terms && vehicle.terms.length > 0 ? (
+                      <div className="space-y-2">
+                        {vehicle.terms.map((term, index) => (
+                          <div key={index} className="text-sm text-gray-600">
+                            {term}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="space-y-2 text-sm text-gray-600">
+                        <div>• Phải có giấy phép lái xe hợp lệ</div>
+                        <div>• Không sử dụng rượu bia khi lái xe</div>
+                        <div>• Trả xe đúng giờ và địa điểm đã thỏa thuận</div>
+                        <div>• Chịu trách nhiệm về các vi phạm giao thông</div>
+                        <div>• Bồi thường thiệt hại nếu có</div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               </div>
@@ -514,7 +557,7 @@ export function VehicleDetail() {
                   
                   <div className="aspect-w-16 aspect-h-9">
                     <iframe
-                      src={`https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3919.9544777043194!2d${vehicle.coordinates.lng}!3d${vehicle.coordinates.lat}!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x0%3A0x0!2zVW5rbm93bg!5e0!3m2!1svi!2s!4v1629789435123!5m2!1svi!2s`}
+                      src={`https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3919.9544777043194!2d${vehicle.longitude}!3d${vehicle.latitude}!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x0%3A0x0!2zVW5rbm93bg!5e0!3m2!1svi!2s!4v1629789435123!5m2!1svi!2s`}
                       width="100%"
                       height="300"
                       style={{ border: 0 }}
@@ -639,9 +682,9 @@ export function VehicleDetail() {
                 className="w-full"
                 size="lg"
                 onClick={handleRentNow}
-                disabled={!vehicle.available}
+                disabled={vehicle.status !== 'AVAILABLE'}
               >
-                {vehicle.available ? 'Thuê xe ngay' : 'Xe không có sẵn'}
+                {vehicle.status === 'AVAILABLE' ? 'Thuê xe ngay' : vehicle.status === 'RESERVED' ? 'Xe đã được đặt' : 'Xe không có sẵn'}
               </Button>
 
               <p className="text-xs text-gray-500 text-center">
@@ -772,6 +815,7 @@ export function VehicleDetail() {
           </div>
         </DialogContent>
       </Dialog>
-    </div>
+      </div>
+    </>
   );
 }

@@ -4,6 +4,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { toast } from 'sonner';
+import { errorMessages } from '../config/errorMessages';
 
 
 interface AuthModalProps {
@@ -196,14 +197,10 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
       const result = await response.json();
 
       if (!response.ok) {
-        console.error('Login error response:', response.status, result); // Debug
-        const errorMessage = result.error || result.message || `Đăng nhập thất bại (${response.status})`;
-        toast.error(errorMessage);
+        const message = errorMessages[result.message];
+        toast.error(message);
         return;
       }
-
-      console.log('Login successful, user data:', result); // Debug
-      
       // Lưu token vào localStorage nếu có
       if (result.accessToken) {
         localStorage.setItem('accessToken', result.accessToken);
@@ -211,7 +208,7 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
       if (result.refreshToken) {
         localStorage.setItem('refreshToken', result.refreshToken);
       }
-      
+
       toast.success('Đăng nhập thành công!');
       onSuccess(result.data || result.user || result); // Fallback nếu không có result.user
       onClose(); // Đóng modal sau khi login thành công
