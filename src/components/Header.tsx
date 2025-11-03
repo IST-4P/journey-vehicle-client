@@ -1,9 +1,20 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { User, Bell, Menu, X, Car, Bike } from 'lucide-react';
-import { Button } from './ui/button';
-import { Badge } from './ui/badge';
-import { NotificationModal } from './NotificationModal';
+import {
+  Bell,
+  Bike,
+  BookOpen,
+  Car,
+  ChevronDown,
+  Menu,
+  Package,
+  Package2,
+  User,
+  X,
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
+import { NotificationModal } from "./NotificationModal";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
 
 interface User {
   name?: string;
@@ -17,7 +28,7 @@ interface User {
 
 interface HeaderProps {
   user: User | null;
-  onAuth: (mode: 'login' | 'register' | 'forgot-password') => void;
+  onAuth: (mode: "login" | "register" | "forgot-password") => void;
   onLogout: () => void;
 }
 
@@ -25,22 +36,31 @@ export function Header({ user, onAuth, onLogout }: HeaderProps) {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const [showVehicleSubmenu, setShowVehicleSubmenu] = useState(false);
+  const [showEquipmentSubmenu, setShowEquipmentSubmenu] = useState(false);
   const location = useLocation();
   const userMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+      if (
+        userMenuRef.current &&
+        !userMenuRef.current.contains(event.target as Node)
+      ) {
         setShowUserMenu(false);
       }
     };
 
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   const isActivePage = (path: string) => {
     return location.pathname === path;
+  };
+
+  const isActiveInGroup = (paths: string[]) => {
+    return paths.some((path) => location.pathname === path);
   };
 
   // Fake notification count - in real app this would come from props or context
@@ -55,40 +75,128 @@ export function Header({ user, onAuth, onLogout }: HeaderProps) {
             <div className="bg-blue-600 p-2 rounded-lg">
               <Car className="h-6 w-6 text-white" />
             </div>
-            <span className="text-xl font-bold text-gray-900">HacMieu Journey</span>
+            <span className="text-xl font-bold text-gray-900">
+              HacMieu Journey
+            </span>
           </Link>
 
           {/* Desktop Navigation */}
-          <nav className="hidden md:flex items-center space-x-8">
-            <Link 
-              to="/" 
-              className={`${isActivePage('/') ? 'text-blue-600 font-medium' : 'text-gray-700 hover:text-blue-600'} transition-colors`}
+          <nav className="hidden lg:flex items-center space-x-6">
+            <Link
+              to="/"
+              className={`${
+                isActivePage("/")
+                  ? "text-blue-600 font-medium"
+                  : "text-gray-700 hover:text-blue-600"
+              } transition-colors`}
             >
               Trang chủ
             </Link>
-            <Link 
-              to="/cars" 
-              className={`${isActivePage('/cars') ? 'text-blue-600 font-medium' : 'text-gray-700 hover:text-blue-600'} transition-colors flex items-center space-x-1`}
+
+            {/* Thuê phương tiện Dropdown */}
+            <div
+              className="relative group"
+              onMouseEnter={() => setShowVehicleSubmenu(true)}
+              onMouseLeave={() => setShowVehicleSubmenu(false)}
             >
-              <Car className="h-4 w-4" />
-              <span>Thuê ô tô</span>
-            </Link>
-            <Link 
-              to="/motorcycles" 
-              className={`${isActivePage('/motorcycles') ? 'text-blue-600 font-medium' : 'text-gray-700 hover:text-blue-600'} transition-colors flex items-center space-x-1`}
+              <div
+                className={`${
+                  isActiveInGroup(["/cars", "/motorcycles"])
+                    ? "text-blue-600 font-medium"
+                    : "text-gray-700 hover:text-blue-600"
+                } transition-colors flex items-center space-x-1 cursor-pointer`}
+              >
+                <Car className="h-4 w-4" />
+                <span>Thuê phương tiện</span>
+                <ChevronDown className="h-3 w-3" />
+              </div>
+
+              {showVehicleSubmenu && (
+                <div className="absolute top-full left-0 mt-2 w-48 bg-white rounded-lg shadow-lg border py-1 z-50">
+                  <Link
+                    to="/cars"
+                    className="flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                  >
+                    <Car className="h-4 w-4" />
+                    <span>Thuê ô tô</span>
+                  </Link>
+                  <Link
+                    to="/motorcycles"
+                    className="flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                  >
+                    <Bike className="h-4 w-4" />
+                    <span>Thuê xe máy</span>
+                  </Link>
+                </div>
+              )}
+            </div>
+
+            {/* Thuê thiết bị Dropdown */}
+            <div
+              className="relative group"
+              onMouseEnter={() => setShowEquipmentSubmenu(true)}
+              onMouseLeave={() => setShowEquipmentSubmenu(false)}
             >
-              <Bike className="h-4 w-4" />
-              <span>Thuê xe máy</span>
+              <div
+                className={`${
+                  isActiveInGroup(["/equipment", "/combos"])
+                    ? "text-blue-600 font-medium"
+                    : "text-gray-700 hover:text-blue-600"
+                } transition-colors flex items-center space-x-1 cursor-pointer`}
+              >
+                <Package className="h-4 w-4" />
+                <span>Thuê thiết bị</span>
+                <ChevronDown className="h-3 w-3" />
+              </div>
+
+              {showEquipmentSubmenu && (
+                <div className="absolute top-full left-0 mt-2 w-48 bg-white rounded-lg shadow-lg border py-1 z-50">
+                  <Link
+                    to="/equipment"
+                    className="flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                  >
+                    <Package className="h-4 w-4" />
+                    <span>Thiết bị du lịch</span>
+                  </Link>
+                  <Link
+                    to="/combos"
+                    className="flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                  >
+                    <Package2 className="h-4 w-4" />
+                    <span>Combo thiết bị</span>
+                  </Link>
+                </div>
+              )}
+            </div>
+
+            <Link
+              to="/blog"
+              className={`${
+                isActivePage("/blog")
+                  ? "text-blue-600 font-medium"
+                  : "text-gray-700 hover:text-blue-600"
+              } transition-colors flex items-center space-x-1`}
+            >
+              <BookOpen className="h-4 w-4" />
+              <span>Blog</span>
             </Link>
-            <Link 
-              to="/about" 
-              className={`${isActivePage('/about') ? 'text-blue-600 font-medium' : 'text-gray-700 hover:text-blue-600'} transition-colors`}
+            <Link
+              to="/about"
+              className={`${
+                isActivePage("/about")
+                  ? "text-blue-600 font-medium"
+                  : "text-gray-700 hover:text-blue-600"
+              } transition-colors`}
             >
               Về chúng tôi
             </Link>
-            <Link 
-              to="/contact" 
-              className={`${isActivePage('/contact') ? 'text-blue-600 font-medium' : 'text-gray-700 hover:text-blue-600'} transition-colors`}
+            <Link
+              to="/contact"
+              className={`${
+                isActivePage("/contact")
+                  ? "text-blue-600 font-medium"
+                  : "text-gray-700 hover:text-blue-600"
+              } transition-colors`}
             >
               Liên hệ
             </Link>
@@ -122,43 +230,41 @@ export function Header({ user, onAuth, onLogout }: HeaderProps) {
                   >
                     {/* Hiển thị tên thay vì avatar */}
                     <User className="h-5 w-5 text-gray-600" />
-                    <span className="text-sm font-medium">
-                      {user.fullName}
-                    </span>
+                    <span className="text-sm font-medium">{user.fullName}</span>
                   </Button>
 
                   {showUserMenu && (
                     <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border py-1 z-10">
-                      <Link 
-                        to="/profile/account" 
+                      <Link
+                        to="/profile/account"
                         className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                         onClick={() => setShowUserMenu(false)}
                       >
                         Hồ sơ cá nhân
                       </Link>
-                      <Link 
-                        to="/profile/history" 
+                      <Link
+                        to="/profile/history"
                         className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                         onClick={() => setShowUserMenu(false)}
                       >
                         Lịch sử thuê
                       </Link>
-                      <Link 
-                        to="/profile/payment" 
+                      <Link
+                        to="/profile/payment"
                         className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                         onClick={() => setShowUserMenu(false)}
                       >
                         Thanh toán/Ví
                       </Link>
-                      <Link 
-                        to="/profile/complaints" 
+                      <Link
+                        to="/profile/complaints"
                         className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                         onClick={() => setShowUserMenu(false)}
                       >
                         Lịch sử khiếu nại
                       </Link>
                       <div className="border-t my-1"></div>
-                      <button 
+                      <button
                         onClick={() => {
                           onLogout();
                           setShowUserMenu(false);
@@ -173,12 +279,10 @@ export function Header({ user, onAuth, onLogout }: HeaderProps) {
               </>
             ) : (
               <div className="flex items-center space-x-2">
-                <Button variant="ghost" onClick={() => onAuth('login')}>
+                <Button variant="ghost" onClick={() => onAuth("login")}>
                   Đăng nhập
                 </Button>
-                <Button onClick={() => onAuth('register')}>
-                  Đăng ký
-                </Button>
+                <Button onClick={() => onAuth("register")}>Đăng ký</Button>
               </div>
             )}
 
@@ -189,7 +293,11 @@ export function Header({ user, onAuth, onLogout }: HeaderProps) {
               className="md:hidden"
               onClick={() => setShowMobileMenu(!showMobileMenu)}
             >
-              {showMobileMenu ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+              {showMobileMenu ? (
+                <X className="h-5 w-5" />
+              ) : (
+                <Menu className="h-5 w-5" />
+              )}
             </Button>
           </div>
         </div>
@@ -198,39 +306,59 @@ export function Header({ user, onAuth, onLogout }: HeaderProps) {
         {showMobileMenu && (
           <div className="md:hidden border-t bg-white py-4">
             <nav className="flex flex-col space-y-4">
-              <Link 
-                to="/" 
-                className={`${isActivePage('/') ? 'text-blue-600 font-medium' : 'text-gray-700'} px-4 py-2`}
+              <Link
+                to="/"
+                className={`${
+                  isActivePage("/")
+                    ? "text-blue-600 font-medium"
+                    : "text-gray-700"
+                } px-4 py-2`}
                 onClick={() => setShowMobileMenu(false)}
               >
                 Trang chủ
               </Link>
-              <Link 
-                to="/cars" 
-                className={`${isActivePage('/cars') ? 'text-blue-600 font-medium' : 'text-gray-700'} px-4 py-2 flex items-center space-x-2`}
+              <Link
+                to="/cars"
+                className={`${
+                  isActivePage("/cars")
+                    ? "text-blue-600 font-medium"
+                    : "text-gray-700"
+                } px-4 py-2 flex items-center space-x-2`}
                 onClick={() => setShowMobileMenu(false)}
               >
                 <Car className="h-4 w-4" />
                 <span>Thuê ô tô</span>
               </Link>
-              <Link 
-                to="/motorcycles" 
-                className={`${isActivePage('/motorcycles') ? 'text-blue-600 font-medium' : 'text-gray-700'} px-4 py-2 flex items-center space-x-2`}
+              <Link
+                to="/motorcycles"
+                className={`${
+                  isActivePage("/motorcycles")
+                    ? "text-blue-600 font-medium"
+                    : "text-gray-700"
+                } px-4 py-2 flex items-center space-x-2`}
                 onClick={() => setShowMobileMenu(false)}
               >
                 <Bike className="h-4 w-4" />
                 <span>Thuê xe máy</span>
               </Link>
-              <Link 
-                to="/about" 
-                className={`${isActivePage('/about') ? 'text-blue-600 font-medium' : 'text-gray-700'} px-4 py-2`}
+              <Link
+                to="/about"
+                className={`${
+                  isActivePage("/about")
+                    ? "text-blue-600 font-medium"
+                    : "text-gray-700"
+                } px-4 py-2`}
                 onClick={() => setShowMobileMenu(false)}
               >
                 Về chúng tôi
               </Link>
-              <Link 
-                to="/contact" 
-                className={`${isActivePage('/contact') ? 'text-blue-600 font-medium' : 'text-gray-700'} px-4 py-2`}
+              <Link
+                to="/contact"
+                className={`${
+                  isActivePage("/contact")
+                    ? "text-blue-600 font-medium"
+                    : "text-gray-700"
+                } px-4 py-2`}
                 onClick={() => setShowMobileMenu(false)}
               >
                 Liên hệ
@@ -238,9 +366,9 @@ export function Header({ user, onAuth, onLogout }: HeaderProps) {
             </nav>
           </div>
         )}
-        
+
         {/* Notification Modal */}
-        <NotificationModal 
+        <NotificationModal
           isOpen={showNotificationModal}
           onClose={() => setShowNotificationModal(false)}
         />
