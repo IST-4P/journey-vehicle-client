@@ -70,6 +70,11 @@ export function VehicleDetail() {
   const [discountCode, setDiscountCode] = useState('');
   const [appliedDiscount, setAppliedDiscount] = useState<Discount | null>(null);
   const [isImageHovered, setIsImageHovered] = useState(false);
+  const [showDateModal, setShowDateModal] = useState(false);
+  const [tempStartDate, setTempStartDate] = useState('');
+  const [tempStartTime, setTempStartTime] = useState('');
+  const [tempEndDate, setTempEndDate] = useState('');
+  const [tempEndTime, setTempEndTime] = useState('');
   const [rentalDuration, setRentalDuration] = useState<{
     startDate: string;
     startTime: string;
@@ -83,6 +88,36 @@ export function VehicleDetail() {
     { code: 'WEEKEND20', discount: 20, description: 'Giảm 20% cho thuê cuối tuần' },
     { code: 'MONTHLY10', discount: 10, description: 'Giảm 10% cho thuê từ 7 ngày' }
   ];
+
+  // Helper function to check if vehicle is available
+  const isVehicleAvailable = (status: string | undefined) => {
+    if (!status) return false;
+    return status === 'AVAILABLE' || status === 'available' || status === 'Active' || status === 'ACTIVE';
+  };
+
+  // Helper function to get status display text
+  const getStatusText = (status: string | undefined) => {
+    if (!status) return 'Không xác định';
+    if (isVehicleAvailable(status)) {
+      return 'Có sẵn';
+    }
+    if (status === 'RESERVED' || status === 'reserved' || status === 'Reserved') {
+      return 'Đã đặt';
+    }
+    return `Không có sẵn (${status})`;
+  };
+
+  // Helper function to get button text
+  const getButtonText = (status: string | undefined) => {
+    if (!status) return 'Không xác định trạng thái';
+    if (isVehicleAvailable(status)) {
+      return 'Thuê xe ngay';
+    }
+    if (status === 'RESERVED' || status === 'reserved' || status === 'Reserved') {
+      return 'Xe đã được đặt';
+    }
+    return `Xe không có sẵn (${status})`;
+  };
 
   useEffect(() => {
     const fetchVehicleDetailCallback = async () => {
@@ -98,7 +133,10 @@ export function VehicleDetail() {
         if (response.ok) {
           const data = await response.json();
           // Parse response data properly
-          setVehicle(data.data || data.vehicle || data);
+          const vehicleData = data.data || data.vehicle || data;
+          console.log('Vehicle data received:', vehicleData);
+          console.log('Vehicle status:', vehicleData?.status);
+          setVehicle(vehicleData);
         } else {
           toast.error('Không tìm thấy thông tin xe');
           navigate('/');
@@ -211,6 +249,52 @@ export function VehicleDetail() {
     setDiscountCode(discount.code);
     setShowDiscountModal(false);
     toast.success(`Đã áp dụng mã giảm giá ${discount.code}`);
+  };
+
+  const handleDateTimeChange = () => {
+    if (tempStartDate && tempStartTime && tempEndDate && tempEndTime) {
+      const startDateTime = new Date(`${tempStartDate}T${tempStartTime}`);
+      const endDateTime = new Date(`${tempEndDate}T${tempEndTime}`);
+      
+      if (endDateTime > startDateTime) {
+        const diffInMs = endDateTime.getTime() - startDateTime.getTime();
+        const hours = Math.ceil(diffInMs / (1000 * 60 * 60));
+        
+        setRentalDuration({
+          startDate: tempStartDate,
+          startTime: tempStartTime,
+          endDate: tempEndDate,
+          endTime: tempEndTime,
+          hours: Math.max(hours, 1)
+        });
+        setShowDateModal(false);
+        toast.success('Đã cập nhật thời gian thuê xe');
+      } else {
+        toast.error('Thời gian kết thúc phải sau thời gian bắt đầu');
+      }
+    } else {
+      toast.error('Vui lòng điền đầy đủ thông tin');
+    }
+  };
+
+  const openDateModal = () => {
+    if (rentalDuration) {
+      setTempStartDate(rentalDuration.startDate);
+      setTempStartTime(rentalDuration.startTime);
+      setTempEndDate(rentalDuration.endDate);
+      setTempEndTime(rentalDuration.endTime);
+    } else {
+      // Set default values to current date/time
+      const now = new Date();
+      const tomorrow = new Date(now);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      
+      setTempStartDate(now.toISOString().split('T')[0]);
+      setTempStartTime('08:00');
+      setTempEndDate(tomorrow.toISOString().split('T')[0]);
+      setTempEndTime('08:00');
+    }
+    setShowDateModal(true);
   };
 
   const handleRentNow = () => {
@@ -391,8 +475,8 @@ export function VehicleDetail() {
                     <span className="font-medium">{vehicle.averageRating || 0}</span>
                     <span className="text-gray-600 ml-1">({vehicle.totalTrips} chuyến)</span>
                   </div>
-                  <Badge variant={vehicle.status === 'AVAILABLE' ? "default" : "secondary"}>
-                    {vehicle.status === 'AVAILABLE' ? 'Có sẵn' : vehicle.status === 'RESERVED' ? 'Đã đặt' : 'Không có sẵn'}
+                  <Badge variant={isVehicleAvailable(vehicle.status) ? "default" : "secondary"}>
+                    {getStatusText(vehicle.status)}
                   </Badge>
                 </div>
               </div>
@@ -592,6 +676,14 @@ export function VehicleDetail() {
                     <div className="text-xs text-gray-500 mt-1">
                       {rentalDuration.startDate} {rentalDuration.startTime} - {rentalDuration.endDate} {rentalDuration.endTime}
                     </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-2 text-xs"
+                      onClick={openDateModal}
+                    >
+                      Chỉnh sửa thời gian
+                    </Button>
                   </>
                 ) : (
                   <>
@@ -601,6 +693,14 @@ export function VehicleDetail() {
                     <div className="text-sm text-gray-600">
                       {formatPrice(vehicle.pricePerHour)}/giờ
                     </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-2 text-xs"
+                      onClick={openDateModal}
+                    >
+                      Chọn thời gian thuê
+                    </Button>
                   </>
                 )}
               </div>
@@ -682,9 +782,9 @@ export function VehicleDetail() {
                 className="w-full"
                 size="lg"
                 onClick={handleRentNow}
-                disabled={vehicle.status !== 'AVAILABLE'}
+                disabled={!isVehicleAvailable(vehicle.status)}
               >
-                {vehicle.status === 'AVAILABLE' ? 'Thuê xe ngay' : vehicle.status === 'RESERVED' ? 'Xe đã được đặt' : 'Xe không có sẵn'}
+                {getButtonText(vehicle.status)}
               </Button>
 
               <p className="text-xs text-gray-500 text-center">
@@ -773,6 +873,72 @@ export function VehicleDetail() {
           )}
         </div>
       )}
+
+      {/* Date/Time Selection Modal */}
+      <Dialog open={showDateModal} onOpenChange={setShowDateModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Chọn thời gian thuê xe</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium mb-1 block">Ngày bắt đầu</label>
+                <Input
+                  type="date"
+                  value={tempStartDate}
+                  onChange={(e) => setTempStartDate(e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Giờ bắt đầu</label>
+                <Input
+                  type="time"
+                  value={tempStartTime}
+                  onChange={(e) => setTempStartTime(e.target.value)}
+                />
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium mb-1 block">Ngày kết thúc</label>
+                <Input
+                  type="date"
+                  value={tempEndDate}
+                  onChange={(e) => setTempEndDate(e.target.value)}
+                  min={tempStartDate || new Date().toISOString().split('T')[0]}
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Giờ kết thúc</label>
+                <Input
+                  type="time"
+                  value={tempEndTime}
+                  onChange={(e) => setTempEndTime(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => setShowDateModal(false)}
+              >
+                Hủy
+              </Button>
+              <Button
+                className="flex-1"
+                onClick={handleDateTimeChange}
+              >
+                Xác nhận
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Discount Modal */}
       <Dialog open={showDiscountModal} onOpenChange={setShowDiscountModal}>

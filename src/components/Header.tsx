@@ -38,6 +38,7 @@ export function Header({ user, onAuth, onLogout }: HeaderProps) {
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [showVehicleSubmenu, setShowVehicleSubmenu] = useState(false);
   const [showEquipmentSubmenu, setShowEquipmentSubmenu] = useState(false);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const location = useLocation();
   const userMenuRef = useRef<HTMLDivElement>(null);
 
@@ -63,8 +64,63 @@ export function Header({ user, onAuth, onLogout }: HeaderProps) {
     return paths.some((path) => location.pathname === path);
   };
 
-  // Fake notification count - in real app this would come from props or context
-  const unreadNotificationCount = 4;
+  // Fetch unread notification count
+  useEffect(() => {
+    const fetchUnreadCount = async () => {
+      if (!user) {
+        setUnreadNotificationCount(0);
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          `${import.meta.env.VITE_API_BASE_URL}/notification/list?page=1&limit=100`,
+          {
+            credentials: 'include',
+          }
+        );
+
+        if (response.ok) {
+          const responseData = await response.json();
+          const notifications = responseData.data?.notifications || [];
+          const unreadCount = notifications.filter((n: { read: boolean }) => !n.read).length;
+          setUnreadNotificationCount(unreadCount);
+        }
+      } catch (error) {
+        console.error('Lỗi khi tải số thông báo:', error);
+      }
+    };
+
+    fetchUnreadCount();
+    
+    // Set up interval to refresh count every 30 seconds
+    const interval = setInterval(fetchUnreadCount, 30000);
+    
+    return () => clearInterval(interval);
+  }, [user]);
+
+  // Function to refresh unread count (can be called from NotificationModal)
+  const refreshUnreadCount = async () => {
+    if (!user) return;
+
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_API_BASE_URL}/notification/list?page=1&limit=100`,
+        {
+          credentials: 'include',
+        }
+      );
+
+      if (response.ok) {
+        const responseData = await response.json();
+        const notifications = responseData.data?.notifications || [];
+        const unreadCount = notifications.filter((n: { read: boolean }) => !n.read).length;
+        setUnreadNotificationCount(unreadCount);
+      }
+    } catch (error) {
+      console.error('Lỗi khi refresh số thông báo:', error);
+    }
+  };
 
   return (
     <header className="fixed top-0 left-0 right-0 bg-white shadow-md z-50">
@@ -112,22 +168,26 @@ export function Header({ user, onAuth, onLogout }: HeaderProps) {
               </div>
 
               {showVehicleSubmenu && (
-                <div className="absolute top-full left-0 mt-2 w-48 bg-white rounded-lg shadow-lg border py-1 z-50">
-                  <Link
-                    to="/cars"
-                    className="flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
-                  >
-                    <Car className="h-4 w-4" />
-                    <span>Thuê ô tô</span>
-                  </Link>
-                  <Link
-                    to="/motorcycles"
-                    className="flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
-                  >
-                    <Bike className="h-4 w-4" />
-                    <span>Thuê xe máy</span>
-                  </Link>
-                </div>
+                <>
+                  {/* Invisible bridge to prevent dropdown from disappearing */}
+                  <div className="absolute top-full left-0 w-48 h-2 bg-transparent z-40"></div>
+                  <div className="absolute top-full left-0 mt-1 w-48 bg-white rounded-lg shadow-lg border py-1 z-50">
+                    <Link
+                      to="/cars"
+                      className="flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                    >
+                      <Car className="h-4 w-4" />
+                      <span>Thuê ô tô</span>
+                    </Link>
+                    <Link
+                      to="/motorcycles"
+                      className="flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                    >
+                      <Bike className="h-4 w-4" />
+                      <span>Thuê xe máy</span>
+                    </Link>
+                  </div>
+                </>
               )}
             </div>
 
@@ -150,22 +210,26 @@ export function Header({ user, onAuth, onLogout }: HeaderProps) {
               </div>
 
               {showEquipmentSubmenu && (
-                <div className="absolute top-full left-0 mt-2 w-48 bg-white rounded-lg shadow-lg border py-1 z-50">
-                  <Link
-                    to="/equipment"
-                    className="flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
-                  >
-                    <Package className="h-4 w-4" />
-                    <span>Thiết bị du lịch</span>
-                  </Link>
-                  <Link
-                    to="/combos"
-                    className="flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
-                  >
-                    <Package2 className="h-4 w-4" />
-                    <span>Combo thiết bị</span>
-                  </Link>
-                </div>
+                <>
+                  {/* Invisible bridge to prevent dropdown from disappearing */}
+                  <div className="absolute top-full left-0 w-48 h-2 bg-transparent z-40"></div>
+                  <div className="absolute top-full left-0 mt-1 w-48 bg-white rounded-lg shadow-lg border py-1 z-50">
+                    <Link
+                      to="/equipment"
+                      className="flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                    >
+                      <Package className="h-4 w-4" />
+                      <span>Thiết bị du lịch</span>
+                    </Link>
+                    <Link
+                      to="/combos"
+                      className="flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                    >
+                      <Package2 className="h-4 w-4" />
+                      <span>Combo thiết bị</span>
+                    </Link>
+                  </div>
+                </>
               )}
             </div>
 
@@ -212,11 +276,12 @@ export function Header({ user, onAuth, onLogout }: HeaderProps) {
                   size="sm"
                   onClick={() => setShowNotificationModal(true)}
                   className="relative p-2"
+                  title={`${unreadNotificationCount} thông báo chưa đọc`}
                 >
                   <Bell className="h-5 w-5" />
                   {unreadNotificationCount > 0 && (
                     <Badge className="absolute -top-1 -right-1 h-5 w-5 rounded-full p-0 flex items-center justify-center text-xs">
-                      {unreadNotificationCount}
+                      {unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
                     </Badge>
                   )}
                 </Button>
@@ -370,7 +435,11 @@ export function Header({ user, onAuth, onLogout }: HeaderProps) {
         {/* Notification Modal */}
         <NotificationModal
           isOpen={showNotificationModal}
-          onClose={() => setShowNotificationModal(false)}
+          onClose={() => {
+            setShowNotificationModal(false);
+            refreshUnreadCount(); // Refresh count when closing modal
+          }}
+          onNotificationChange={refreshUnreadCount}
         />
       </div>
     </header>

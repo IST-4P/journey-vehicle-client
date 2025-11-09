@@ -72,19 +72,90 @@ export function BookingProcess() {
     }).format(price);
   };
 
+  const updateRentalDuration = (startDate: string, endDate: string) => {
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      
+      if (end > start) {
+        const diffInMs = end.getTime() - start.getTime();
+        const hours = Math.ceil(diffInMs / (1000 * 60 * 60));
+        const days = Math.ceil(diffInMs / (1000 * 60 * 60 * 24));
+        
+        setBookingData(prev => ({
+          ...prev,
+          rentalDuration: {
+            startDate,
+            startTime: '08:00',
+            endDate,
+            endTime: '08:00',
+            hours: Math.max(hours, 1),
+            days: Math.max(days, 1)
+          }
+        }));
+      }
+    }
+  };
+
+  const handleStartDateChange = (value: string) => {
+    setBookingData(prev => ({ ...prev, startDate: value }));
+    updateRentalDuration(value, bookingData.endDate);
+  };
+
+  const handleEndDateChange = (value: string) => {
+    setBookingData(prev => ({ ...prev, endDate: value }));
+    updateRentalDuration(bookingData.startDate, value);
+  };
+
   const calculatePricing = () => {
     if (!bookingData.vehicle) return null;
 
-    const basePrice = bookingData.rentalDuration 
-      ? bookingData.vehicle.pricePerHour * bookingData.rentalDuration.hours
-      : bookingData.vehicle.pricePerDay;
-    const insurancePrice = bookingData.insurance ? 50000 : 0;
+    // Calculate base price based on rental duration or date difference
+    let basePrice;
+    let rentalDays = 1;
+    
+    if (bookingData.rentalDuration && bookingData.rentalDuration.days) {
+      rentalDays = bookingData.rentalDuration.days;
+      basePrice = bookingData.vehicle.pricePerDay * rentalDays;
+    } else if (bookingData.startDate && bookingData.endDate) {
+      const start = new Date(bookingData.startDate);
+      const end = new Date(bookingData.endDate);
+      if (end > start) {
+        const diffInMs = end.getTime() - start.getTime();
+        rentalDays = Math.ceil(diffInMs / (1000 * 60 * 60 * 24));
+        basePrice = bookingData.vehicle.pricePerDay * rentalDays;
+      } else {
+        basePrice = bookingData.vehicle.pricePerDay;
+      }
+    } else {
+      basePrice = bookingData.vehicle.pricePerDay;
+    }
+      
+    const insurancePrice = bookingData.insurance ? 50000 : 0; // Fixed insurance price to match VehicleDetail
     const subtotal = basePrice + insurancePrice;
-    const vat = subtotal * 0.1;
-    const depositAmount = 3000000; // Tiền cọc
-    const collateral = 500000; // Tiền thế chấp
-    const discountAmount = bookingData.discountCode ? subtotal * 0.15 : 0; // 15% discount example
-    const total = subtotal + vat - discountAmount;
+    const vat = Math.round(subtotal * 0.1); // 10% VAT
+    const depositAmount = 3000000; // Fixed deposit amount to match VehicleDetail
+    const collateral = 500000; // Fixed collateral amount
+    
+    // Apply discount if discount code exists
+    let discountAmount = 0;
+    if (bookingData.discountCode) {
+      switch (bookingData.discountCode.toUpperCase()) {
+        case 'NEWUSER':
+          discountAmount = Math.round(subtotal * 0.15);
+          break;
+        case 'WEEKEND20':
+          discountAmount = Math.round(subtotal * 0.20);
+          break;
+        case 'MONTHLY10':
+          discountAmount = Math.round(subtotal * 0.10);
+          break;
+        default:
+          discountAmount = 0;
+      }
+    }
+    
+    const total = subtotal + vat + depositAmount + collateral - discountAmount;
 
     return {
       basePrice,
@@ -95,8 +166,70 @@ export function BookingProcess() {
       collateral,
       discountAmount,
       total,
-      rentalDuration: bookingData.rentalDuration
+      rentalDuration: bookingData.rentalDuration,
+      rentalDays
     };
+  };
+
+  const createBooking = async () => {
+    if (!bookingData.vehicle || !pricing) {
+      throw new Error('Thiếu thông tin xe hoặc giá thuê');
+    }
+
+    if (!bookingData.startDate || !bookingData.endDate) {
+      throw new Error('Vui lòng chọn ngày thuê xe');
+    }
+
+    try {
+      // Create ISO datetime strings
+      const startDateTime = new Date(`${bookingData.startDate}T${bookingData.rentalDuration?.startTime || '08:00'}:00.000Z`);
+      const endDateTime = new Date(`${bookingData.endDate}T${bookingData.rentalDuration?.endTime || '18:00'}:00.000Z`);
+
+      const bookingPayload = {
+        vehicleId: bookingData.vehicle.id,
+        startTime: startDateTime.toISOString(),
+        endTime: endDateTime.toISOString(),
+        pickupAddress: bookingData.vehicle.location,
+        pickupLat: bookingData.vehicle.latitude,
+        pickupLng: bookingData.vehicle.longitude,
+        rentalFee: Math.round(pricing.basePrice),
+        insuranceFee: Math.round(pricing.insurancePrice),
+        vat: Math.round(pricing.vat),
+        discount: Math.round(pricing.discountAmount),
+        deposit: Math.round(pricing.depositAmount),
+        notes: `Thuê xe ${bookingData.vehicle.name} - ${bookingData.vehicle.type === 'CAR' ? 'Ô tô' : 'Xe máy'}${bookingData.insurance ? ' (Có bảo hiểm)' : ''}`
+      };
+
+      console.log('Creating booking with payload:', bookingPayload);
+
+      const response = await fetch(
+        `${import.meta.env.VITE_API_BASE_URL}/booking`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(bookingPayload)
+        }
+      );
+
+      if (response.ok) {
+        const bookingResult = await response.json();
+        console.log('Booking created successfully:', bookingResult);
+        return bookingResult;
+      } else {
+        const errorData = await response.json();
+        console.error('Booking API error:', errorData);
+        throw new Error(errorData.message || `Không thể tạo booking (${response.status})`);
+      }
+    } catch (error) {
+      console.error('Error creating booking:', error);
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error('Có lỗi xảy ra khi tạo booking');
+    }
   };
 
   const handleNextStep = () => {
@@ -120,15 +253,22 @@ export function BookingProcess() {
     }
   };
 
-  const handlePaymentConfirm = () => {
+  const handlePaymentConfirm = async () => {
     setLoading(true);
-    // Simulate payment confirmation
-    setTimeout(() => {
+    
+    try {
+      // Call API to create booking
+      const bookingResult = await createBooking();
+      
+      // If successful, move to step 3
       setCurrentStep(3);
       setLoading(false);
       setShowQR(false);
-      toast.success('Thanh toán thành công!');
-    }, 2000);
+      toast.success('Đặt xe thành công! Mã booking: ' + (bookingResult?.data?.id || 'N/A'));
+    } catch (error) {
+      setLoading(false);
+      toast.error(error instanceof Error ? error.message : 'Có lỗi xảy ra khi đặt xe');
+    }
   };
 
   const pricing = calculatePricing();
@@ -233,7 +373,7 @@ export function BookingProcess() {
                       <div className="flex items-center justify-between mb-2">
                         <span className="font-medium">Thời gian đã chọn:</span>
                         <span className="text-blue-600 font-medium">
-                          {bookingData.rentalDuration.hours} giờ
+                          {bookingData.rentalDuration.days} ngày
                         </span>
                       </div>
                       <div className="text-sm text-gray-600">
@@ -257,7 +397,7 @@ export function BookingProcess() {
                           id="startDate"
                           type="date"
                           value={bookingData.startDate}
-                          onChange={(e) => setBookingData({...bookingData, startDate: e.target.value})}
+                          onChange={(e) => handleStartDateChange(e.target.value)}
                           min={new Date().toISOString().split('T')[0]}
                           className="mt-1"
                         />
@@ -268,7 +408,7 @@ export function BookingProcess() {
                           id="endDate"
                           type="date"
                           value={bookingData.endDate}
-                          onChange={(e) => setBookingData({...bookingData, endDate: e.target.value})}
+                          onChange={(e) => handleEndDateChange(e.target.value)}
                           min={bookingData.startDate}
                           className="mt-1"
                         />
@@ -307,7 +447,7 @@ export function BookingProcess() {
                   <Checkbox
                     id="agreement"
                     checked={bookingData.agreementAccepted}
-                    onCheckedChange={(checked) => setBookingData({...bookingData, agreementAccepted: checked})}
+                    onCheckedChange={(checked: boolean) => setBookingData({...bookingData, agreementAccepted: checked})}
                   />
                   <label htmlFor="agreement" className="text-sm text-gray-600">
                     Tôi đồng ý với{' '}
@@ -469,7 +609,7 @@ export function BookingProcess() {
                 <div className="flex justify-between">
                   <span>
                     Phí thuê xe 
-                    {pricing.rentalDuration ? ` (${pricing.rentalDuration.hours} giờ)` : ' (1 ngày)'}
+                    {pricing.rentalDays > 1 ? ` (${pricing.rentalDays} ngày)` : ' (1 ngày)'}
                   </span>
                   <span>{formatPrice(pricing.basePrice)}</span>
                 </div>
@@ -486,6 +626,16 @@ export function BookingProcess() {
                   <span>{formatPrice(pricing.vat)}</span>
                 </div>
 
+                <div className="flex justify-between">
+                  <span>Tiền cọc</span>
+                  <span>{formatPrice(pricing.depositAmount)}</span>
+                </div>
+
+                <div className="flex justify-between text-yellow-600">
+                  <span>Tiền thế chấp</span>
+                  <span>{formatPrice(pricing.collateral)}</span>
+                </div>
+
                 {pricing.discountAmount > 0 && (
                   <div className="flex justify-between text-green-600">
                     <span>Giảm giá ({bookingData.discountCode})</span>
@@ -496,18 +646,8 @@ export function BookingProcess() {
                 <Separator />
 
                 <div className="flex justify-between font-semibold">
-                  <span>Tạm tính</span>
+                  <span>Tổng cộng</span>
                   <span>{formatPrice(pricing.total)}</span>
-                </div>
-
-                <div className="flex justify-between text-blue-600">
-                  <span>Tiền cọc</span>
-                  <span>{formatPrice(pricing.depositAmount)}</span>
-                </div>
-
-                <div className="flex justify-between text-yellow-600">
-                  <span>Tiền thế chấp</span>
-                  <span>{formatPrice(pricing.collateral)}</span>
                 </div>
 
                 <Separator />
