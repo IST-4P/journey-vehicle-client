@@ -15,6 +15,7 @@ import { Separator } from './ui/separator';
 import { ScrollArea } from './ui/scroll-area';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { toast } from 'sonner@2.0.3';
+import { uploadLicenseImages } from '../utils/media-upload';
 
 interface ComplaintMessage {
   id: string;
@@ -171,6 +172,18 @@ export function ComplaintDetail() {
     setSending(true);
     
     try {
+      // Upload attachments first (using the same presigned flow)
+      let attachmentUrls: string[] = [];
+      if (attachments.length > 0) {
+        try {
+          attachmentUrls = await uploadLicenseImages(attachments);
+        } catch (e) {
+          console.error('Upload attachments failed:', e);
+          toast.error('Tải ảnh đính kèm thất bại');
+          setSending(false);
+          return;
+        }
+      }
       // Simulate API call
       await new Promise(resolve => setTimeout(resolve, 1000));
       
@@ -179,7 +192,8 @@ export function ComplaintDetail() {
         content: replyContent,
         sender: 'user',
         senderName: 'Nguyễn Văn A',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        attachments: attachmentUrls.length ? attachmentUrls : undefined,
       };
 
       if (complaint) {
