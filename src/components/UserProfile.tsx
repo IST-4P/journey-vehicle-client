@@ -18,7 +18,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { toast } from 'sonner';
-import { uploadAvatarImage, uploadLicenseImages } from '../utils/imgbb';
+import { uploadAvatarImage, uploadLicenseImages, debugPostmanFlow } from '../utils/media-upload';
+import { debugPresignedUpload } from '../utils/debug-upload';
 
 // License class enum
 export const LicenseClassEnum = {
@@ -40,7 +41,7 @@ interface UserProfileProps {
 
 export function UserProfile({ user }: UserProfileProps) {
   const location = useLocation();
-  const [currentUser, setCurrentUser] = useState(user);
+  const [currentUser] = useState(user);
   const [driverLicense, setDriverLicense] = useState<Driver | null>(null);
 
   // Fetch driver_licenses for current user
@@ -209,10 +210,10 @@ function AccountTab({ user, driver }: { user: User; driver?: Driver | null }) {
     try {
       setIsLoading(true);
       
-      // Upload lên ImgBB và lấy URL
-      const imageUrl = await uploadAvatarImage(file, import.meta.env.VITE_IMGBB_API_KEY);
+      // Upload using internal presigned URL API
+      const imageUrl = await uploadAvatarImage(file);
       
-      // Lưu URL ảnh vào database qua API của mình
+      // Save URL to database via internal API
       const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/user/profile`, {
         method: 'PUT',
         headers: {
@@ -229,9 +230,10 @@ function AccountTab({ user, driver }: { user: User; driver?: Driver | null }) {
           ...prev,
           avatar: imageUrl
         }));
-        toast.success('Cập nhật ảnh đại diện thành công!');
+        toast.success('Cập nhật ảnh đại diện thành công! (Debug mode - không reload)');
         // Trigger parent component refresh
-        window.location.reload();
+        // window.location.reload(); // Commented out for debugging
+        console.log('✅ Avatar upload completed successfully. Image URL:', imageUrl);
       } else {
         const errorData = await response.json();
         throw new Error(errorData.message || 'Lưu URL ảnh vào database thất bại');
@@ -288,8 +290,20 @@ function AccountTab({ user, driver }: { user: User; driver?: Driver | null }) {
 
     setIsLoading(true);
     try {
-      // Upload images to ImgBB
-      const imageUrls = await uploadLicenseImages(licenseImages, import.meta.env.VITE_IMGBB_API_KEY);
+      // Upload images using internal presigned URL API
+      const filesToUpload: File[] = [];
+      if (licenseImages.front) filesToUpload.push(licenseImages.front);
+      if (licenseImages.back) filesToUpload.push(licenseImages.back);
+      if (licenseImages.selfie) filesToUpload.push(licenseImages.selfie);
+      
+      const imageUrls = await uploadLicenseImages(filesToUpload);
+      
+      // Map URLs to corresponding fields
+      const urlMapping = {
+        front: imageUrls[0],
+        back: imageUrls[1],
+        selfie: imageUrls[2] || null
+      };
       
       // Prepare payload
       const payload = {
@@ -300,9 +314,9 @@ function AccountTab({ user, driver }: { user: User; driver?: Driver | null }) {
         issueDate: profileData.issueDate ? new Date(profileData.issueDate).toISOString() : null,
         expiryDate: profileData.expiryDate ? new Date(profileData.expiryDate).toISOString() : null,
         issuePlace: profileData.issuePlace || null,
-        frontImageUrl: imageUrls.front,
-        backImageUrl: imageUrls.back,
-        selfieImageUrl: imageUrls.selfie
+        frontImageUrl: urlMapping.front,
+        backImageUrl: urlMapping.back,
+        selfieImageUrl: urlMapping.selfie
       };
 
       console.log('Sending license payload:', payload);
@@ -433,17 +447,99 @@ function AccountTab({ user, driver }: { user: User; driver?: Driver | null }) {
               style={{ display: 'none' }}
               id="avatar-upload"
             />
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={() => document.getElementById('avatar-upload')?.click()}
-              disabled={isLoading}
-            >
-              <Camera className="h-4 w-4 mr-2" />
-              {isLoading ? 'Đang tải...' : 'Thay đổi ảnh'}
-            </Button>
+            <div className="flex gap-2 flex-wrap">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => document.getElementById('avatar-upload')?.click()}
+                disabled={isLoading}
+              >
+                <Camera className="h-4 w-4 mr-2" />
+                {isLoading ? 'Đang tải...' : 'Thay đổi ảnh'}
+              </Button>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={async () => {
+                  try {
+                    console.log('🚀 Starting debug upload test...');
+                    const result = await debugPresignedUpload();
+                    console.log('✅ Debug test completed successfully! URL:', result);
+                    toast.success('Debug test thành công! Xem console để biết chi tiết.');
+                  } catch (error) {
+                    console.error('❌ Debug test failed:', error);
+                    toast.error(`Debug test thất bại: ${error}`);
+                  }
+                }}
+              >
+                Debug Upload
+              </Button>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  
+                  try {
+                    console.log('🧪 Testing real avatar upload without reload...');
+                    setIsLoading(true);
+                    const imageUrl = await uploadAvatarImage(file);
+                    console.log('✅ Real avatar upload successful! URL:', imageUrl);
+                    toast.success('Upload thành công! Không reload để debug.');
+                    setProfileData(prev => ({ ...prev, avatar: imageUrl }));
+                  } catch (error) {
+                    console.error('❌ Real avatar upload failed:', error);
+                    toast.error(`Upload thất bại: ${error}`);
+                  } finally {
+                    setIsLoading(false);
+                  }
+                }}
+                id="debug-avatar-upload"
+                className="hidden"
+              />
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => document.getElementById('debug-avatar-upload')?.click()}
+                disabled={isLoading}
+              >
+                Test Real Upload
+              </Button>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  
+                  try {
+                    console.log('🔥 Testing EXACT Postman flow...');
+                    setIsLoading(true);
+                    await debugPostmanFlow(file);
+                    console.log('🎉 Postman flow test completed successfully!');
+                    toast.success('Postman flow test thành công! Xem console để biết chi tiết.');
+                  } catch (error) {
+                    console.error('❌ Postman flow test failed:', error);
+                    toast.error(`Postman flow test thất bại: ${error}`);
+                  } finally {
+                    setIsLoading(false);
+                  }
+                }}
+                id="postman-flow-upload"
+                className="hidden"
+              />
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => document.getElementById('postman-flow-upload')?.click()}
+                disabled={isLoading}
+              >
+                Test Postman Flow
+              </Button>
+            </div>
             <p className="text-sm text-gray-600 mt-1">
-              JPG, PNG, GIF tối đa 32MB (qua ImgBB)
+              JPG, PNG, GIF tối đa 10MB
             </p>
           </div>
         </div>
