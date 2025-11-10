@@ -18,8 +18,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { toast } from 'sonner';
-import { uploadAvatarImage, uploadLicenseImages, debugPostmanFlow } from '../utils/media-upload';
-import { debugPresignedUpload } from '../utils/debug-upload';
+import { uploadAvatarImage, uploadLicenseImages } from '../utils/media-upload';
 
 // License class enum
 export const LicenseClassEnum = {
@@ -457,86 +456,7 @@ function AccountTab({ user, driver }: { user: User; driver?: Driver | null }) {
                 <Camera className="h-4 w-4 mr-2" />
                 {isLoading ? 'Đang tải...' : 'Thay đổi ảnh'}
               </Button>
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={async () => {
-                  try {
-                    console.log('🚀 Starting debug upload test...');
-                    const result = await debugPresignedUpload();
-                    console.log('✅ Debug test completed successfully! URL:', result);
-                    toast.success('Debug test thành công! Xem console để biết chi tiết.');
-                  } catch (error) {
-                    console.error('❌ Debug test failed:', error);
-                    toast.error(`Debug test thất bại: ${error}`);
-                  }
-                }}
-              >
-                Debug Upload
-              </Button>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  
-                  try {
-                    console.log('🧪 Testing real avatar upload without reload...');
-                    setIsLoading(true);
-                    const imageUrl = await uploadAvatarImage(file);
-                    console.log('✅ Real avatar upload successful! URL:', imageUrl);
-                    toast.success('Upload thành công! Không reload để debug.');
-                    setProfileData(prev => ({ ...prev, avatar: imageUrl }));
-                  } catch (error) {
-                    console.error('❌ Real avatar upload failed:', error);
-                    toast.error(`Upload thất bại: ${error}`);
-                  } finally {
-                    setIsLoading(false);
-                  }
-                }}
-                id="debug-avatar-upload"
-                className="hidden"
-              />
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={() => document.getElementById('debug-avatar-upload')?.click()}
-                disabled={isLoading}
-              >
-                Test Real Upload
-              </Button>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  
-                  try {
-                    console.log('🔥 Testing EXACT Postman flow...');
-                    setIsLoading(true);
-                    await debugPostmanFlow(file);
-                    console.log('🎉 Postman flow test completed successfully!');
-                    toast.success('Postman flow test thành công! Xem console để biết chi tiết.');
-                  } catch (error) {
-                    console.error('❌ Postman flow test failed:', error);
-                    toast.error(`Postman flow test thất bại: ${error}`);
-                  } finally {
-                    setIsLoading(false);
-                  }
-                }}
-                id="postman-flow-upload"
-                className="hidden"
-              />
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={() => document.getElementById('postman-flow-upload')?.click()}
-                disabled={isLoading}
-              >
-                Test Postman Flow
-              </Button>
+              
             </div>
             <p className="text-sm text-gray-600 mt-1">
               JPG, PNG, GIF tối đa 10MB

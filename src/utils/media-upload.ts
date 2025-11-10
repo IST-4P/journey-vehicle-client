@@ -66,61 +66,24 @@ async function uploadFileToPresignedUrl(file: File, presignedUrl: string): Promi
   try {
     console.log('Uploading file to presigned URL:', presignedUrl);
     console.log('File type:', file.type, 'File size:', file.size);
-    
-    // Convert file to ArrayBuffer to mimic Postman's binary data approach
-    const arrayBuffer = await file.arrayBuffer();
-    console.log('File converted to ArrayBuffer, size:', arrayBuffer.byteLength);
-    
-    // Create request exactly like Postman does
+
+    // Send the raw file (matches Postman binary upload)
     const response = await fetch(presignedUrl, {
       method: 'PUT',
-      body: arrayBuffer,
+      body: file,
       headers: {
-        'Accept': '*/*',
-        'Accept-Language': 'vi-VN,vi;q=0.9',
-        'Origin': window.location.origin,
-        'Priority': 'u=1, i',
-        'Referer': window.location.href,
-        'Sec-CH-UA': '"Chromium";v="142", "Brave";v="142", "Not_A Brand";v="99"',
-        'Sec-CH-UA-Mobile': '?0',
-        'Sec-CH-UA-Platform': '"Windows"',
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'cross-site',
-        'Sec-GPC': '1',
-        'User-Agent': navigator.userAgent,
-        // NOTE: Intentionally NOT setting Content-Type to let browser handle it
-        // This matches how Postman sends binary data without explicit content-type
+        // Ensure object is public
+        'x-amz-acl': 'public-read',
+        // Safe content type
+        'Content-Type': file.type || 'application/octet-stream',
       },
     });
 
-    console.log('Upload response status:', response.status);
-    console.log('Upload response headers:', Object.fromEntries(response.headers.entries()));
-    
     if (!response.ok) {
       const responseText = await response.text();
-      console.error('Upload failed with response:', responseText);
-      
-      // If first attempt fails, try with explicit Content-Type
-      console.log('Trying with explicit Content-Type...');
-      const response2 = await fetch(presignedUrl, {
-        method: 'PUT',
-        body: arrayBuffer,
-        headers: {
-          'Content-Type': file.type || 'application/octet-stream',
-        },
-      });
-      
-      if (!response2.ok) {
-        const responseText2 = await response2.text();
-        console.error('Second upload attempt failed:', responseText2);
-        throw new Error(`Upload failed: ${response.status} - ${responseText}`);
-      }
-      
-      console.log('Second upload attempt successful!');
-      return;
+      console.error('Upload failed:', response.status, responseText);
+      throw new Error(`Upload failed: ${response.status}`);
     }
-    
     console.log('File uploaded successfully!');
   } catch (error) {
     console.error('Error uploading file to presigned URL:', error);
@@ -250,28 +213,14 @@ export async function uploadAvatarImage(file: File): Promise<string> {
     // Get presigned URL
     const { presignedUrl, url } = await getPresignedUrl(uniqueFilename);
 
-    // Upload using the exact same method that works in debugPostmanFlow
-    const arrayBuffer = await file.arrayBuffer();
-    
+    // Upload using raw File with minimal headers
     const response = await fetch(presignedUrl, {
       method: 'PUT',
-      body: arrayBuffer,
+      body: file,
       headers: {
-        'Accept': '*/*',
-        'Accept-Language': 'vi-VN,vi;q=0.9',
-        'Origin': window.location.origin,
-        'Priority': 'u=1, i',
-        'Referer': window.location.href,
-        'Sec-CH-UA': '"Chromium";v="142", "Brave";v="142", "Not_A Brand";v="99"',
-        'Sec-CH-UA-Mobile': '?0',
-        'Sec-CH-UA-Platform': '"Windows"',
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'cross-site',
-        'Sec-GPC': '1',
-        'User-Agent': navigator.userAgent
-        // NO Content-Type header - let browser handle it automatically
-      }
+        'x-amz-acl': 'public-read',
+        'Content-Type': file.type || 'application/octet-stream',
+      },
     });
 
     if (!response.ok) {
@@ -310,27 +259,14 @@ export async function uploadLicenseImages(files: File[]): Promise<string[]> {
       // Get presigned URL
       const { presignedUrl, url } = await getPresignedUrl(uniqueFilename);
 
-      // Upload file using the exact same method that works
-      const arrayBuffer = await file.arrayBuffer();
-      
+      // Upload file using raw File with minimal headers
       const response = await fetch(presignedUrl, {
         method: 'PUT',
-        body: arrayBuffer,
+        body: file,
         headers: {
-          'Accept': '*/*',
-          'Accept-Language': 'vi-VN,vi;q=0.9',
-          'Origin': window.location.origin,
-          'Priority': 'u=1, i',
-          'Referer': window.location.href,
-          'Sec-CH-UA': '"Chromium";v="142", "Brave";v="142", "Not_A Brand";v="99"',
-          'Sec-CH-UA-Mobile': '?0',
-          'Sec-CH-UA-Platform': '"Windows"',
-          'Sec-Fetch-Dest': 'empty',
-          'Sec-Fetch-Mode': 'cors',
-          'Sec-Fetch-Site': 'cross-site',
-          'Sec-GPC': '1',
-          'User-Agent': navigator.userAgent
-        }
+          'x-amz-acl': 'public-read',
+          'Content-Type': file.type || 'application/octet-stream',
+        },
       });
 
       if (!response.ok) {
