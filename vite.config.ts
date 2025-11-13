@@ -61,5 +61,9 @@
     server: {
       port: 3000,
       open: true,
+      hmr: {
+        port: 3001, // Use different port for HMR
+        host: 'localhost'
+      }
     },
   });

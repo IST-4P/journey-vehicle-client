@@ -22,8 +22,6 @@ export const refreshAccessToken = async (): Promise<boolean> => {
       if (result.refreshToken) {
         localStorage.setItem('refreshToken', result.refreshToken);
       }
-      
-      console.log('Access token refreshed successfully');
       return true;
     } else {
       console.error('Failed to refresh token:', response.status);
@@ -70,7 +68,6 @@ export const setupTokenRefresh = (onTokenExpired?: () => void) => {
   refreshAccessToken();
   
   const refreshInterval = setInterval(async () => {
-    console.log('Auto refreshing token...');
     const success = await refreshAccessToken();
     
     if (!success && onTokenExpired) {

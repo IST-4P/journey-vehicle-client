@@ -11,15 +11,33 @@ import { Separator } from './ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
-import { Checkbox } from './ui/checkbox';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { toast } from 'sonner';
 
-interface Discount {
-  code: string;
-  discount: number;
-  description: string;
-}
+const formatPrice = (price: number) => {
+  return new Intl.NumberFormat('vi-VN', {
+    style: 'currency',
+    currency: 'VND'
+  }).format(price);
+};
+
+const formatDurationLabel = (hours: number) => {
+  const safeHours = Math.max(Math.round(hours), 1);
+  const days = Math.floor(safeHours / 24);
+  const remainingHours = safeHours % 24;
+  const parts: string[] = [];
+  if (days > 0) {
+    parts.push(`${days} ngày`);
+  }
+  if (remainingHours > 0) {
+    parts.push(`${remainingHours} giờ`);
+  }
+  if (parts.length === 0) {
+    return '1 giờ';
+  }
+  return parts.join(' ');
+};
 
 interface VehicleFeature {
   feature: {
@@ -64,11 +82,7 @@ export function VehicleDetail() {
   const [loading, setLoading] = useState(true);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [showImageModal, setShowImageModal] = useState(false);
-  const [showDiscountModal, setShowDiscountModal] = useState(false);
   const [isFavorite, setIsFavorite] = useState(false);
-  const [insurance, setInsurance] = useState(false);
-  const [discountCode, setDiscountCode] = useState('');
-  const [appliedDiscount, setAppliedDiscount] = useState<Discount | null>(null);
   const [isImageHovered, setIsImageHovered] = useState(false);
   const [showDateModal, setShowDateModal] = useState(false);
   const [tempStartDate, setTempStartDate] = useState('');
@@ -82,12 +96,15 @@ export function VehicleDetail() {
     endTime: string;
     hours: number;
   } | null>(null);
-
-  const availableDiscounts = [
-    { code: 'NEWUSER', discount: 15, description: 'Giảm 15% cho khách hàng mới' },
-    { code: 'WEEKEND20', discount: 20, description: 'Giảm 20% cho thuê cuối tuần' },
-    { code: 'MONTHLY10', discount: 10, description: 'Giảm 10% cho thuê từ 7 ngày' }
-  ];
+  const [selectedHours, setSelectedHours] = useState(1);
+  const [priceBreakdown, setPriceBreakdown] = useState<{
+    rentalFee: number;
+    insuranceFee: number;
+    vat: number;
+    deposit: number;
+    totalAmount: number;
+  } | null>(null);
+  const [priceLoading, setPriceLoading] = useState(false);
 
   // Helper function to check if vehicle is available
   const isVehicleAvailable = (status: string | undefined) => {
@@ -134,8 +151,6 @@ export function VehicleDetail() {
           const data = await response.json();
           // Parse response data properly
           const vehicleData = data.data || data.vehicle || data;
-          console.log('Vehicle data received:', vehicleData);
-          console.log('Vehicle status:', vehicleData?.status);
           setVehicle(vehicleData);
         } else {
           toast.error('Không tìm thấy thông tin xe');
@@ -165,16 +180,66 @@ export function VehicleDetail() {
         const diffInMs = endDateTime.getTime() - startDateTime.getTime();
         const hours = Math.ceil(diffInMs / (1000 * 60 * 60));
         
+        const safeHours = Math.max(hours, 1);
         setRentalDuration({
           startDate,
           startTime,
           endDate,
           endTime,
-          hours: Math.max(hours, 1)
+          hours: safeHours
         });
+        setSelectedHours(safeHours);
       }
     }
   }, [id, searchParams, navigate]);
+
+  const rentalHours = rentalDuration?.hours ?? selectedHours;
+  const durationLabel = formatDurationLabel(rentalHours);
+
+  // Fetch price breakdown every time rental duration or manual hours change
+  useEffect(() => {
+    if (!vehicle?.id) return;
+    const controller = new AbortController();
+    const fetchPrice = async () => {
+      try {
+        setPriceLoading(true);
+        const params = new URLSearchParams({
+          vehicleId: vehicle.id,
+          hours: rentalHours.toString(),
+        });
+        const response = await fetch(
+          `${import.meta.env.VITE_API_BASE_URL}/vehicle-price?${params.toString()}`,
+          {
+            credentials: 'include',
+            signal: controller.signal,
+          }
+        );
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const json = await response.json();
+        const payload = json.data || json;
+        setPriceBreakdown({
+          rentalFee: payload.rentalFee ?? 0,
+          insuranceFee: payload.insuranceFee ?? 0,
+          vat: payload.vat ?? 0,
+          deposit: payload.deposit ?? 0,
+          totalAmount: payload.totalAmount ?? 0,
+        });
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        console.error('Error fetching vehicle price:', error);
+        setPriceBreakdown(null);
+        toast.error('Không thể tính giá thuê xe, vui lòng thử lại.');
+      } finally {
+        if (!controller.signal.aborted) {
+          setPriceLoading(false);
+        }
+      }
+    };
+    fetchPrice();
+    return () => controller.abort();
+  }, [vehicle?.id, rentalHours]);
 
   // Auto-slide effect for images
   useEffect(() => {
@@ -222,34 +287,7 @@ export function VehicleDetail() {
     };
   }, [showImageModal, vehicle]);
 
-  const formatPrice = (price: number) => {
-    return new Intl.NumberFormat('vi-VN', {
-      style: 'currency',
-      currency: 'VND'
-    }).format(price);
-  };
-
-  const calculateTotal = () => {
-    if (!vehicle) return 0;
-    
-    const basePrice = rentalDuration 
-      ? vehicle.pricePerHour * rentalDuration.hours 
-      : vehicle.pricePerDay;
-    const insurancePrice = insurance ? 50000 : 0;
-    const vat = (basePrice + insurancePrice) * 0.1;
-    const depositAmount = 3000000; // Tiền cọc
-    const subtotal = basePrice + insurancePrice + vat + depositAmount;
-    const discountAmount = appliedDiscount ? ((basePrice + insurancePrice + vat) * appliedDiscount.discount / 100) : 0;
-    
-    return subtotal - discountAmount;
-  };
-
-  const handleApplyDiscount = (discount: Discount) => {
-    setAppliedDiscount(discount);
-    setDiscountCode(discount.code);
-    setShowDiscountModal(false);
-    toast.success(`Đã áp dụng mã giảm giá ${discount.code}`);
-  };
+  const calculateTotal = () => priceBreakdown?.totalAmount || 0;
 
   const handleDateTimeChange = () => {
     if (tempStartDate && tempStartTime && tempEndDate && tempEndTime) {
@@ -260,13 +298,15 @@ export function VehicleDetail() {
         const diffInMs = endDateTime.getTime() - startDateTime.getTime();
         const hours = Math.ceil(diffInMs / (1000 * 60 * 60));
         
+        const safeHours = Math.max(hours, 1);
         setRentalDuration({
           startDate: tempStartDate,
           startTime: tempStartTime,
           endDate: tempEndDate,
           endTime: tempEndTime,
-          hours: Math.max(hours, 1)
+          hours: safeHours
         });
+        setSelectedHours(safeHours);
         setShowDateModal(false);
         toast.success('Đã cập nhật thời gian thuê xe');
       } else {
@@ -284,28 +324,28 @@ export function VehicleDetail() {
       setTempEndDate(rentalDuration.endDate);
       setTempEndTime(rentalDuration.endTime);
     } else {
-      // Set default values to current date/time
       const now = new Date();
-      const tomorrow = new Date(now);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      
+      const endDate = new Date(now.getTime() + selectedHours * 60 * 60 * 1000);
       setTempStartDate(now.toISOString().split('T')[0]);
-      setTempStartTime('08:00');
-      setTempEndDate(tomorrow.toISOString().split('T')[0]);
-      setTempEndTime('08:00');
+      setTempStartTime(now.toTimeString().slice(0, 5));
+      setTempEndDate(endDate.toISOString().split('T')[0]);
+      setTempEndTime(endDate.toTimeString().slice(0, 5));
     }
     setShowDateModal(true);
   };
 
   const handleRentNow = () => {
-    if (!vehicle) return;
+    if (!vehicle || !priceBreakdown) {
+      toast.error('Không thể đặt xe khi chưa có thông tin giá.');
+      return;
+    }
     navigate(`/booking/${vehicle.id}`, {
       state: {
         vehicle,
-        insurance,
-        discountCode: appliedDiscount?.code,
         totalPrice: calculateTotal(),
-        rentalDuration
+        rentalDuration,
+        priceBreakdown,
+        selectedHours
       }
     });
   };
@@ -664,44 +704,74 @@ export function VehicleDetail() {
               <CardTitle className="text-xl">Thông tin thuê xe</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div>
-                {rentalDuration ? (
-                  <>
+              <div className="space-y-2">
+                <div className="space-y-2">
+                  <div>
                     <div className="text-2xl font-bold text-blue-600">
-                      {formatPrice(vehicle.pricePerHour * rentalDuration.hours)}
+                      {priceLoading
+                        ? 'Đang tính giá...'
+                        : formatPrice(priceBreakdown?.rentalFee ?? 0)}
                     </div>
                     <div className="text-sm text-gray-600">
-                      {rentalDuration.hours} giờ x {formatPrice(vehicle.pricePerHour)}/giờ
+                      {rentalDuration
+                        ? `Thời lượng: ${durationLabel}`
+                        : `Giá tạm tính ${durationLabel}`}
                     </div>
-                    <div className="text-xs text-gray-500 mt-1">
-                      {rentalDuration.startDate} {rentalDuration.startTime} - {rentalDuration.endDate} {rentalDuration.endTime}
-                    </div>
+                    {rentalDuration ? (
+                      <div className="text-xs text-gray-500 mt-1">
+                        {rentalDuration.startDate} {rentalDuration.startTime} - {rentalDuration.endDate} {rentalDuration.endTime}
+                      </div>
+                    ) : null}
                     <Button
                       variant="outline"
                       size="sm"
                       className="mt-2 text-xs"
                       onClick={openDateModal}
                     >
-                      Chỉnh sửa thời gian
+                      {rentalDuration ? 'Chỉnh sửa thời gian' : 'Chọn thời gian thuê'}
                     </Button>
-                  </>
-                ) : (
-                  <>
-                    <div className="text-2xl font-bold text-blue-600">
-                      {formatPrice(vehicle.pricePerDay)}/ngày
+                  </div>
+
+                  {!rentalDuration && (
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div className="p-3 border rounded-lg text-center">
+                        <p className="text-gray-600">Giá theo giờ</p>
+                        <p className="text-lg font-semibold text-blue-600">
+                          {vehicle ? formatPrice(vehicle.pricePerHour) : '…'}/giờ
+                        </p>
+                      </div>
+                      <div className="p-3 border rounded-lg text-center">
+                        <p className="text-gray-600">Giá theo ngày</p>
+                        <p className="text-lg font-semibold text-blue-600">
+                          {vehicle ? formatPrice(vehicle.pricePerDay) : '…'}/ngày
+                        </p>
+                      </div>
                     </div>
-                    <div className="text-sm text-gray-600">
-                      {formatPrice(vehicle.pricePerHour)}/giờ
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="mt-2 text-xs"
-                      onClick={openDateModal}
+                  )}
+                </div>
+
+                {!rentalDuration && (
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-gray-700">Hoặc chọn nhanh số giờ</p>
+                    <Select
+                      value={selectedHours.toString()}
+                      onValueChange={(value) => {
+                        const hour = parseInt(value, 10) || 1;
+                        setSelectedHours(hour);
+                      }}
                     >
-                      Chọn thời gian thuê
-                    </Button>
-                  </>
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Chọn số giờ" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {[1, 2, 3, 4, 6, 8, 12, 18, 24, 36, 48, 72].map((option) => (
+                          <SelectItem key={option} value={option.toString()}>
+                            {option} giờ
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 )}
               </div>
 
@@ -711,53 +781,27 @@ export function VehicleDetail() {
               <div className="space-y-2">
                 <div className="flex justify-between">
                   <span>
-                    Phí thuê xe 
-                    {rentalDuration ? ` (${rentalDuration.hours} giờ)` : ' (1 ngày)'}
+                    Phí thuê xe ({durationLabel})
                   </span>
                   <span>
-                    {formatPrice(rentalDuration 
-                      ? vehicle.pricePerHour * rentalDuration.hours 
-                      : vehicle.pricePerDay
-                    )}
+                    {priceLoading ? '…' : formatPrice(priceBreakdown?.rentalFee ?? 0)}
                   </span>
-                </div>
-                
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="insurance"
-                      checked={insurance}
-                      onCheckedChange={setInsurance}
-                    />
-                    <label htmlFor="insurance" className="text-sm">Phí bảo hiểm</label>
-                  </div>
-                  <span>{formatPrice(insurance ? 50000 : 0)}</span>
                 </div>
 
                 <div className="flex justify-between">
-                  <span>Thuế VAT (10%)</span>
-                  <span>{formatPrice(((rentalDuration 
-                    ? vehicle.pricePerHour * rentalDuration.hours 
-                    : vehicle.pricePerDay
-                  ) + (insurance ? 50000 : 0)) * 0.1)}</span>
+                  <span>Phí bảo hiểm</span>
+                  <span>{priceLoading ? '…' : formatPrice(priceBreakdown?.insuranceFee ?? 0)}</span>
+                </div>
+
+                <div className="flex justify-between">
+                  <span>Thuế VAT</span>
+                  <span>{priceLoading ? '…' : formatPrice(priceBreakdown?.vat ?? 0)}</span>
                 </div>
 
                 <div className="flex justify-between">
                   <span>Tiền cọc</span>
-                  <span>{formatPrice(3000000)}</span>
+                  <span>{priceLoading ? '…' : formatPrice(priceBreakdown?.deposit ?? 0)}</span>
                 </div>
-
-                <div className="flex justify-between text-yellow-600">
-                  <span>Tiền thế chấp</span>
-                  <span>{formatPrice(500000)}</span>
-                </div>
-
-                {appliedDiscount && (
-                  <div className="flex justify-between text-green-600">
-                    <span>Giảm giá ({appliedDiscount.code})</span>
-                    <span>-{appliedDiscount.discount}%</span>
-                  </div>
-                )}
               </div>
 
               <Separator />
@@ -767,22 +811,11 @@ export function VehicleDetail() {
                 <span className="text-blue-600">{formatPrice(calculateTotal())}</span>
               </div>
 
-              {/* Discount Code */}
-              <div>
-                <Button
-                  variant="outline"
-                  className="w-full"
-                  onClick={() => setShowDiscountModal(true)}
-                >
-                  {appliedDiscount ? `Mã: ${appliedDiscount.code}` : 'Nhập mã giảm giá'}
-                </Button>
-              </div>
-
               <Button
                 className="w-full"
                 size="lg"
                 onClick={handleRentNow}
-                disabled={!isVehicleAvailable(vehicle.status)}
+                disabled={!isVehicleAvailable(vehicle.status) || priceLoading || !priceBreakdown}
               >
                 {getButtonText(vehicle.status)}
               </Button>
@@ -940,47 +973,6 @@ export function VehicleDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* Discount Modal */}
-      <Dialog open={showDiscountModal} onOpenChange={setShowDiscountModal}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Mã giảm giá</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Input
-                placeholder="Nhập mã giảm giá"
-                value={discountCode}
-                onChange={(e) => setDiscountCode(e.target.value)}
-              />
-              <Button className="w-full mt-2" variant="outline">
-                Áp dụng mã
-              </Button>
-            </div>
-            
-            <div>
-              <h4 className="font-medium mb-3">Mã giảm giá có sẵn</h4>
-              <div className="space-y-2">
-                {availableDiscounts.map((discount) => (
-                  <div
-                    key={discount.code}
-                    className="border rounded-lg p-3 cursor-pointer hover:bg-gray-50"
-                    onClick={() => handleApplyDiscount(discount)}
-                  >
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <div className="font-medium">{discount.code}</div>
-                        <div className="text-sm text-gray-600">{discount.description}</div>
-                      </div>
-                      <Badge variant="secondary">-{discount.discount}%</Badge>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
       </div>
     </>
   );

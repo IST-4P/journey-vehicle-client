@@ -15,6 +15,7 @@ import { Link, useLocation } from "react-router-dom";
 import { NotificationModal } from "./NotificationModal";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import { connectNotificationSocket } from "../utils/ws-client";
 
 interface User {
   name?: string;
@@ -64,8 +65,10 @@ export function Header({ user, onAuth, onLogout }: HeaderProps) {
     return paths.some((path) => location.pathname === path);
   };
 
-  // Fetch unread notification count
+  // Initial fetch + subscribe via WebSocket
   useEffect(() => {
+    let wsCleanup: (() => void) | undefined;
+
     const fetchUnreadCount = async () => {
       if (!user) {
         setUnreadNotificationCount(0);
@@ -75,11 +78,8 @@ export function Header({ user, onAuth, onLogout }: HeaderProps) {
       try {
         const response = await fetch(
           `${import.meta.env.VITE_API_BASE_URL}/notification/list?page=1&limit=100`,
-          {
-            credentials: 'include',
-          }
+          { credentials: 'include' }
         );
-
         if (response.ok) {
           const responseData = await response.json();
           const notifications = responseData.data?.notifications || [];
@@ -92,11 +92,23 @@ export function Header({ user, onAuth, onLogout }: HeaderProps) {
     };
 
     fetchUnreadCount();
-    
-    // Set up interval to refresh count every 30 seconds
-    const interval = setInterval(fetchUnreadCount, 30000);
-    
-    return () => clearInterval(interval);
+
+    // Subscribe websocket for live updates
+    if (user) {
+      const ws = connectNotificationSocket();
+      const offNew = ws.on('newNotification', () => {
+        setUnreadNotificationCount((c) => c + 1);
+      });
+      // Some backends emit generic messages; try to parse count
+      const offAny = ws.on('message', (data) => {
+        try {
+          if (data?.type === 'newNotification') setUnreadNotificationCount((c) => c + 1);
+        } catch {}
+      });
+      wsCleanup = () => { offNew(); offAny(); ws.close(); };
+    }
+
+    return () => { wsCleanup?.(); };
   }, [user]);
 
   // Function to refresh unread count (can be called from NotificationModal)

@@ -6,6 +6,7 @@ import { Badge } from './ui/badge';
 import { CheckCheck, Clock, X, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
+import { connectNotificationSocket } from '../utils/ws-client';
 
 interface Notification {
   id: string; 
@@ -73,6 +74,22 @@ export function NotificationModal({ isOpen, onClose, onNotificationChange }: Not
       fetchNotifications();
     }
   }, [isOpen, navigate, page, limit]);
+
+  // Live updates via WebSocket
+  useEffect(() => {
+    if (!isOpen) return;
+    const ws = connectNotificationSocket();
+    const off = ws.on('newNotification', (payload) => {
+      if (!payload) return;
+      setNotifications((prev) => [payload, ...prev]);
+    });
+    const offAny = ws.on('message', (data) => {
+      if (data?.type === 'newNotification' && data?.data) {
+        setNotifications((prev) => [data.data, ...prev]);
+      }
+    });
+    return () => { off(); offAny(); ws.close(); };
+  }, [isOpen]);
 
 
   const unreadCount = notifications.filter(n => !n.read).length;

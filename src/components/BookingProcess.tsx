@@ -1,36 +1,149 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
-import { Check, ArrowLeft, CreditCard, Shield, Calendar, MapPin, Users, Fuel } from 'lucide-react';
+import { Check, ArrowLeft, CreditCard, Shield, Calendar, MapPin, Users, Fuel, Copy } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Separator } from './ui/separator';
 import { Checkbox } from './ui/checkbox';
+import { Textarea } from './ui/textarea';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { toast } from 'sonner@2.0.3';
+import { connectPaymentSocket } from '../utils/ws-client';
+
+interface PriceBreakdown {
+  rentalFee: number;
+  insuranceFee: number;
+  vat: number;
+  deposit: number;
+  totalAmount: number;
+}
+
+interface PaymentDetails {
+  id: string;
+  bookingId: string;
+  paymentCode: string;
+  amount: number;
+  status: string;
+}
+
+type StoredBookingSession = {
+  bookingId: string;
+  paymentCode?: string;
+  amount?: number;
+  createdAt: number;
+};
+
+const QR_BASE_URL = 'https://qr.sepay.vn/img';
+const BOOKING_SESSION_STORAGE_KEY = 'hacmieu_vehicle_booking_sessions';
+
+const sanitizeDescription = (value: string) => {
+  if (!value) return 'VEHICLEPAYMENT';
+  return value.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+};
+
+const isPaymentStatusSuccessful = (status?: string, message?: string) => {
+  const normalized = (status || '').toUpperCase();
+  const normalizedMessage = (message || '').toUpperCase();
+  if (!normalized && !normalizedMessage) return false;
+  const successTokens = ['PAID', 'SUCCESS', 'COMPLETED', 'APPROVED'];
+  return successTokens.some((token) => normalized.includes(token) || normalizedMessage.includes(token));
+};
+
+const readStoredSessions = (): Record<string, StoredBookingSession> => {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(BOOKING_SESSION_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return typeof parsed === 'object' && parsed !== null ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+const getStoredSessionForVehicle = (vehicleId: string): StoredBookingSession | null => {
+  const map = readStoredSessions();
+  return map[vehicleId] || null;
+};
+
+const persistStoredSession = (vehicleId: string, session: StoredBookingSession | null) => {
+  if (typeof window === 'undefined') return;
+  const map = readStoredSessions();
+  if (session) {
+    map[vehicleId] = session;
+  } else {
+    delete map[vehicleId];
+  }
+  window.localStorage.setItem(BOOKING_SESSION_STORAGE_KEY, JSON.stringify(map));
+};
+const formatPrice = (price: number) => {
+  return new Intl.NumberFormat('vi-VN', {
+    style: 'currency',
+    currency: 'VND'
+  }).format(price);
+};
+
+const formatDurationLabel = (hours: number) => {
+  const safeHours = Math.max(Math.round(hours), 1);
+  const days = Math.floor(safeHours / 24);
+  const remainingHours = safeHours % 24;
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days} ngày`);
+  if (remainingHours > 0) parts.push(`${remainingHours} giờ`);
+  if (parts.length === 0) return '1 giờ';
+  return parts.join(' ');
+};
+
+const addHoursToDateTime = (dateStr: string, timeStr: string, hours: number) => {
+  const date = new Date(`${dateStr}T${timeStr}:00`);
+  date.setHours(date.getHours() + hours);
+  return {
+    date: date.toISOString().split('T')[0],
+    time: date.toTimeString().slice(0, 5)
+  };
+};
 
 export function BookingProcess() {
   const { vehicleId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const initialVehicle = location.state?.vehicle || null;
+  const apiBase = import.meta.env.VITE_API_BASE_URL;
+  const paymentAccountNumber = import.meta.env.VITE_PAYMENT_ACCOUNT || '0344927528';
+  const paymentBankCode = import.meta.env.VITE_PAYMENT_BANK_CODE || 'MB';
+  const paymentAccountName = import.meta.env.VITE_PAYMENT_ACCOUNT_NAME || 'HacMieu Journey';
+
+  const initialHoursRef = useRef(location.state?.rentalDuration?.hours ?? location.state?.selectedHours ?? 1);
   
   const [currentStep, setCurrentStep] = useState(1);
-  const [loading, setLoading] = useState(false);
   const [showQR, setShowQR] = useState(false);
   
   const [bookingData, setBookingData] = useState({
-    vehicle: location.state?.vehicle || null,
-    insurance: location.state?.insurance || false,
-    discountCode: location.state?.discountCode || '',
-    totalPrice: location.state?.totalPrice || 0,
+    vehicle: initialVehicle,
     rentalDuration: location.state?.rentalDuration || null,
     startDate: '',
     endDate: '',
+    startTime: location.state?.rentalDuration?.startTime || '08:00',
+    endTime: location.state?.rentalDuration?.endTime || '08:00',
     pickupLocation: 'self',
     agreementAccepted: false,
     paymentMethod: 'qr'
   });
+  const [priceBreakdown, setPriceBreakdown] = useState<PriceBreakdown | null>(location.state?.priceBreakdown || null);
+  const [priceLoading, setPriceLoading] = useState(false);
+  const [bookingId, setBookingId] = useState<string | null>(null);
+  const [bookingRequestInFlight, setBookingRequestInFlight] = useState(false);
+  const [paymentDetails, setPaymentDetails] = useState<PaymentDetails | null>(null);
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [paymentStatus, setPaymentStatus] = useState<'idle' | 'waiting' | 'confirmed' | 'failed'>('idle');
+  const [wsStatus, setWsStatus] = useState<'idle' | 'connecting' | 'connected'>('idle');
+  const [storedSession, setStoredSession] = useState<StoredBookingSession | null>(null);
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelLoading, setCancelLoading] = useState(false);
 
   const steps = [
     { number: 1, title: 'Xác nhận thông tin', icon: Check },
@@ -49,33 +162,203 @@ export function BookingProcess() {
       setBookingData(prev => ({
         ...prev,
         startDate: bookingData.rentalDuration.startDate,
-        endDate: bookingData.rentalDuration.endDate
+        endDate: bookingData.rentalDuration.endDate,
+        startTime: bookingData.rentalDuration.startTime,
+        endTime: bookingData.rentalDuration.endTime
       }));
     } else {
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
-      const dayAfter = new Date();
-      dayAfter.setDate(dayAfter.getDate() + 2);
-
+      const defaultStartDate = tomorrow.toISOString().split('T')[0];
+      const defaultStartTime = '08:00';
+      const { date: computedEndDate, time: computedEndTime } = addHoursToDateTime(
+        defaultStartDate,
+        defaultStartTime,
+        initialHoursRef.current
+      );
       setBookingData(prev => ({
         ...prev,
-        startDate: tomorrow.toISOString().split('T')[0],
-        endDate: dayAfter.toISOString().split('T')[0]
+        startDate: defaultStartDate,
+        endDate: computedEndDate,
+        startTime: defaultStartTime,
+        endTime: computedEndTime
       }));
     }
   }, []);
 
-  const formatPrice = (price: number) => {
-    return new Intl.NumberFormat('vi-VN', {
-      style: 'currency',
-      currency: 'VND'
-    }).format(price);
-  };
+  const derivedVehicleId = bookingData.vehicle?.id;
+  const rentalHours = Math.max(bookingData.rentalDuration?.hours || initialHoursRef.current, 1);
+  const durationLabel = formatDurationLabel(rentalHours);
 
-  const updateRentalDuration = (startDate: string, endDate: string) => {
-    if (startDate && endDate) {
+  const clearSessionState = useCallback(() => {
+    if (derivedVehicleId) {
+      persistStoredSession(derivedVehicleId, null);
+    }
+    setStoredSession(null);
+  }, [derivedVehicleId]);
+
+  const finalizePaymentSuccess = useCallback(() => {
+    setPaymentStatus((prev) => {
+      if (prev === 'confirmed') {
+        return prev;
+      }
+      setShowQR(false);
+      setCurrentStep(3);
+      toast.success('Thanh toán đã được xác nhận!');
+      clearSessionState();
+      return 'confirmed';
+    });
+  }, [clearSessionState]);
+
+  useEffect(() => {
+    if (storedSession && currentStep === 1) {
+      setCurrentStep(2);
+    }
+  }, [storedSession, currentStep]);
+
+  useEffect(() => {
+    if (!derivedVehicleId) return;
+    const session = getStoredSessionForVehicle(derivedVehicleId);
+    if (session) {
+      setStoredSession(session);
+      setBookingId(session.bookingId);
+      setPaymentStatus('waiting');
+    }
+  }, [derivedVehicleId]);
+
+  useEffect(() => {
+    const targetVehicleId = derivedVehicleId || vehicleId;
+    if (!targetVehicleId) return;
+    const controller = new AbortController();
+
+    const fetchPrice = async () => {
+      try {
+        setPriceLoading(true);
+        const params = new URLSearchParams({
+          vehicleId: targetVehicleId,
+          hours: rentalHours.toString()
+        });
+        const response = await fetch(
+          `${import.meta.env.VITE_API_BASE_URL}/vehicle-price?${params.toString()}`,
+          {
+            credentials: 'include',
+            signal: controller.signal
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const json = await response.json();
+        const payload = json.data || json;
+        setPriceBreakdown({
+          rentalFee: payload.rentalFee ?? 0,
+          insuranceFee: payload.insuranceFee ?? 0,
+          vat: payload.vat ?? 0,
+          deposit: payload.deposit ?? 0,
+          totalAmount: payload.totalAmount ?? 0
+        });
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        console.error('Error fetching booking price:', error);
+        toast.error('Không thể tính giá thuê, vui lòng thử lại.');
+        setPriceBreakdown(null);
+      } finally {
+        if (!controller.signal.aborted) {
+          setPriceLoading(false);
+        }
+      }
+    };
+
+    fetchPrice();
+    return () => controller.abort();
+  }, [vehicleId, derivedVehicleId, rentalHours]);
+
+  useEffect(() => {
+    if (currentStep === 2) {
+      if (!bookingId && !bookingRequestInFlight) {
+        initializePaymentFlow();
+      } else if (bookingId && !paymentDetails && !paymentLoading) {
+        loadPaymentDetails(bookingId);
+      }
+    }
+  }, [currentStep, bookingId, bookingRequestInFlight, paymentDetails, paymentLoading]);
+
+  useEffect(() => {
+    if (currentStep !== 2 || !bookingId || !paymentDetails) {
+      setShowQR(false);
+      return;
+    }
+    setShowQR(true);
+  }, [currentStep, bookingId, paymentDetails]);
+
+  useEffect(() => {
+    if (currentStep !== 2 || !bookingId || paymentStatus !== 'waiting') {
+      return;
+    }
+    const interval = window.setInterval(() => {
+      loadPaymentDetails(bookingId, { silent: true });
+    }, 5000);
+    return () => window.clearInterval(interval);
+  }, [currentStep, bookingId, paymentStatus]);
+
+  useEffect(() => {
+    if (
+      currentStep === 2 &&
+      paymentDetails &&
+      isPaymentStatusSuccessful(paymentDetails.status)
+    ) {
+      finalizePaymentSuccess();
+    }
+  }, [currentStep, paymentDetails, finalizePaymentSuccess]);
+
+  useEffect(() => {
+    if (currentStep !== 2 || !bookingId || !paymentDetails) return;
+
+    setWsStatus('connecting');
+    const ws = connectPaymentSocket();
+
+    const handleMessage = (payload: any) => {
+      const data = payload?.data || payload;
+      const eventBookingId = data.bookingId || data.data?.bookingId;
+      const eventPaymentCode = data.paymentCode || data.data?.paymentCode;
+      if (eventBookingId !== bookingId && eventPaymentCode !== paymentDetails.paymentCode) {
+        return;
+      }
+
+      const statusRaw = (data.status || data.paymentStatus || '').toString();
+      const messageRaw = (data.message || '').toString();
+
+      if (isPaymentStatusSuccessful(statusRaw, messageRaw)) {
+        finalizePaymentSuccess();
+      } else if (statusRaw.toUpperCase().includes('PENDING')) {
+        setPaymentStatus('waiting');
+      }
+    };
+
+    const offPayment = ws.on('payment', handleMessage);
+    const offMessage = ws.on('message', handleMessage);
+    const offOpen = ws.on('open', () => setWsStatus('connected'));
+    const offClose = ws.on('close', () => setWsStatus('idle'));
+    const offError = ws.on('error', () => setWsStatus('idle'));
+
+    return () => {
+      offPayment();
+      offMessage();
+      offOpen();
+      offClose();
+      offError();
+      ws.close();
+    };
+  }, [currentStep, bookingId, paymentDetails, finalizePaymentSuccess]);
+
+  const updateRentalDuration = (startDate: string, startTime: string, endDate: string, endTime: string) => {
+    if (startDate && startTime && endDate && endTime) {
       const start = new Date(startDate);
+      start.setHours(parseInt(startTime.split(':')[0] || '0', 10), parseInt(startTime.split(':')[1] || '0', 10));
       const end = new Date(endDate);
+      end.setHours(parseInt(endTime.split(':')[0] || '0', 10), parseInt(endTime.split(':')[1] || '0', 10));
       
       if (end > start) {
         const diffInMs = end.getTime() - start.getTime();
@@ -86,9 +369,9 @@ export function BookingProcess() {
           ...prev,
           rentalDuration: {
             startDate,
-            startTime: '08:00',
+            startTime,
             endDate,
-            endTime: '08:00',
+            endTime,
             hours: Math.max(hours, 1),
             days: Math.max(days, 1)
           }
@@ -99,80 +382,40 @@ export function BookingProcess() {
 
   const handleStartDateChange = (value: string) => {
     setBookingData(prev => ({ ...prev, startDate: value }));
-    updateRentalDuration(value, bookingData.endDate);
+    updateRentalDuration(value, bookingData.startTime, bookingData.endDate, bookingData.endTime);
   };
 
   const handleEndDateChange = (value: string) => {
     setBookingData(prev => ({ ...prev, endDate: value }));
-    updateRentalDuration(bookingData.startDate, value);
+    updateRentalDuration(bookingData.startDate, bookingData.startTime, value, bookingData.endTime);
+  };
+
+  const handleStartTimeChange = (value: string) => {
+    setBookingData(prev => ({ ...prev, startTime: value }));
+    updateRentalDuration(bookingData.startDate, value, bookingData.endDate, bookingData.endTime);
+  };
+
+  const handleEndTimeChange = (value: string) => {
+    setBookingData(prev => ({ ...prev, endTime: value }));
+    updateRentalDuration(bookingData.startDate, bookingData.startTime, bookingData.endDate, value);
   };
 
   const calculatePricing = () => {
-    if (!bookingData.vehicle) return null;
-
-    // Calculate base price based on rental duration or date difference
-    let basePrice;
-    let rentalDays = 1;
-    
-    if (bookingData.rentalDuration && bookingData.rentalDuration.days) {
-      rentalDays = bookingData.rentalDuration.days;
-      basePrice = bookingData.vehicle.pricePerDay * rentalDays;
-    } else if (bookingData.startDate && bookingData.endDate) {
-      const start = new Date(bookingData.startDate);
-      const end = new Date(bookingData.endDate);
-      if (end > start) {
-        const diffInMs = end.getTime() - start.getTime();
-        rentalDays = Math.ceil(diffInMs / (1000 * 60 * 60 * 24));
-        basePrice = bookingData.vehicle.pricePerDay * rentalDays;
-      } else {
-        basePrice = bookingData.vehicle.pricePerDay;
-      }
-    } else {
-      basePrice = bookingData.vehicle.pricePerDay;
-    }
-      
-    const insurancePrice = bookingData.insurance ? 50000 : 0; // Fixed insurance price to match VehicleDetail
-    const subtotal = basePrice + insurancePrice;
-    const vat = Math.round(subtotal * 0.1); // 10% VAT
-    const depositAmount = 3000000; // Fixed deposit amount to match VehicleDetail
-    const collateral = 500000; // Fixed collateral amount
-    
-    // Apply discount if discount code exists
-    let discountAmount = 0;
-    if (bookingData.discountCode) {
-      switch (bookingData.discountCode.toUpperCase()) {
-        case 'NEWUSER':
-          discountAmount = Math.round(subtotal * 0.15);
-          break;
-        case 'WEEKEND20':
-          discountAmount = Math.round(subtotal * 0.20);
-          break;
-        case 'MONTHLY10':
-          discountAmount = Math.round(subtotal * 0.10);
-          break;
-        default:
-          discountAmount = 0;
-      }
-    }
-    
-    const total = subtotal + vat + depositAmount + collateral - discountAmount;
+    if (!priceBreakdown) return null;
 
     return {
-      basePrice,
-      insurancePrice,
-      subtotal,
-      vat,
-      depositAmount,
-      collateral,
-      discountAmount,
-      total,
-      rentalDuration: bookingData.rentalDuration,
-      rentalDays
+      basePrice: priceBreakdown.rentalFee,
+      insurancePrice: priceBreakdown.insuranceFee,
+      vat: priceBreakdown.vat,
+      depositAmount: priceBreakdown.deposit,
+      total: priceBreakdown.totalAmount - priceBreakdown.deposit,
+      totalWithDeposit: priceBreakdown.totalAmount,
+      durationLabel
     };
   };
 
   const createBooking = async () => {
-    if (!bookingData.vehicle || !pricing) {
+    if (!bookingData.vehicle || !priceBreakdown) {
       throw new Error('Thiếu thông tin xe hoặc giá thuê');
     }
 
@@ -192,12 +435,12 @@ export function BookingProcess() {
         pickupAddress: bookingData.vehicle.location,
         pickupLat: bookingData.vehicle.latitude,
         pickupLng: bookingData.vehicle.longitude,
-        rentalFee: Math.round(pricing.basePrice),
-        insuranceFee: Math.round(pricing.insurancePrice),
-        vat: Math.round(pricing.vat),
-        discount: Math.round(pricing.discountAmount),
-        deposit: Math.round(pricing.depositAmount),
-        notes: `Thuê xe ${bookingData.vehicle.name} - ${bookingData.vehicle.type === 'CAR' ? 'Ô tô' : 'Xe máy'}${bookingData.insurance ? ' (Có bảo hiểm)' : ''}`
+        rentalFee: Math.round(priceBreakdown.rentalFee),
+        insuranceFee: Math.round(priceBreakdown.insuranceFee),
+        vat: Math.round(priceBreakdown.vat),
+        deposit: Math.round(priceBreakdown.deposit),
+        totalAmount: Math.round(priceBreakdown.totalAmount),
+        notes: `Thuê xe ${bookingData.vehicle.name} - ${bookingData.vehicle.type === 'CAR' ? 'Ô tô' : 'Xe máy'}`
       };
 
       console.log('Creating booking with payload:', bookingPayload);
@@ -232,6 +475,159 @@ export function BookingProcess() {
     }
   };
 
+  const copyToClipboard = async (value: string, label: string) => {
+    if (!value) return;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = value;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      }
+      toast.success(`Đã sao chép ${label}`);
+    } catch (error) {
+      console.error('Copy clipboard error:', error);
+      toast.error('Không thể sao chép, vui lòng thử lại');
+    }
+  };
+
+  const loadPaymentDetails = async (id: string, options?: { toastOnError?: boolean; silent?: boolean }) => {
+    if (!options?.silent) {
+      setPaymentLoading(true);
+    }
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_API_BASE_URL}/payment/${id}`,
+        {
+          credentials: 'include',
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const json = await response.json();
+      const payload = json.data || json;
+
+      const amountValue = Number(payload.amount ?? payload.totalAmount ?? 0) || 0;
+
+      const hydratedPayment: PaymentDetails = {
+        id: payload.id,
+        bookingId: payload.bookingId || id,
+        paymentCode: (payload.paymentCode || sanitizeDescription(id)).toString(),
+        amount: amountValue,
+        status: payload.status || payload.paymentStatus || 'PENDING'
+      };
+      setPaymentDetails(hydratedPayment);
+      const sessionVehicleId = derivedVehicleId || payload.vehicleId || bookingData.vehicle?.id;
+      if (sessionVehicleId) {
+        const sessionPayload: StoredBookingSession = {
+          bookingId: hydratedPayment.bookingId,
+          paymentCode: hydratedPayment.paymentCode,
+          amount: hydratedPayment.amount,
+          createdAt: Date.now()
+        };
+        setStoredSession(sessionPayload);
+        persistStoredSession(sessionVehicleId, sessionPayload);
+      }
+      setPaymentStatus('waiting');
+    } catch (error) {
+      console.error('Error fetching payment details:', error);
+      setPaymentDetails(null);
+      setPaymentStatus('failed');
+      if (options?.toastOnError) {
+        toast.error('Không thể tải thông tin thanh toán');
+      }
+    } finally {
+      if (!options?.silent) {
+        setPaymentLoading(false);
+      }
+    }
+  };
+
+  const initializePaymentFlow = async () => {
+    if (!bookingData.vehicle || !priceBreakdown) {
+      toast.error('Thiếu thông tin xe hoặc giá.');
+      return;
+    }
+
+    setBookingRequestInFlight(true);
+    setPaymentStatus('waiting');
+    try {
+      const bookingResult = await createBooking();
+      const id = bookingResult?.data?.id || bookingResult?.booking?.id;
+      if (!id) {
+        throw new Error('Không nhận được mã booking');
+      }
+      setBookingId(id);
+      await loadPaymentDetails(id);
+      toast.success('Đã tạo yêu cầu thanh toán. Vui lòng chuyển khoản.');
+    } catch (error) {
+      console.error('Initialize payment flow error:', error);
+      setPaymentStatus('failed');
+      toast.error(error instanceof Error ? error.message : 'Không thể tạo thanh toán');
+    } finally {
+      setBookingRequestInFlight(false);
+    }
+  };
+
+  const handleRefreshPaymentDetails = async () => {
+    if (!bookingId) return;
+    await loadPaymentDetails(bookingId, { toastOnError: true });
+  };
+
+  const handleCancelBooking = async () => {
+    if (!bookingId) return;
+    const reason = cancelReason.trim() || 'User cancelled booking';
+    setCancelLoading(true);
+    try {
+      const response = await fetch(`${apiBase}/booking/cancel`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          id: bookingId,
+          cancelReason: reason,
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || `HTTP ${response.status}`);
+      }
+
+      toast.success('Đã hủy yêu cầu đặt xe');
+      setCancelDialogOpen(false);
+      setCancelReason('');
+      handleEditInformation();
+    } catch (error) {
+      console.error('Cancel booking error:', error);
+      toast.error(error instanceof Error ? error.message : 'Không thể hủy giao dịch');
+    } finally {
+      setCancelLoading(false);
+    }
+  };
+
+  const handleEditInformation = () => {
+    setPaymentDetails(null);
+    setBookingId(null);
+    setPaymentStatus('idle');
+    setWsStatus('idle');
+    setBookingRequestInFlight(false);
+    setShowQR(false);
+    setCurrentStep(1);
+    clearSessionState();
+  };
+
   const handleNextStep = () => {
     if (currentStep === 1) {
       if (!bookingData.startDate || !bookingData.endDate) {
@@ -242,44 +638,101 @@ export function BookingProcess() {
         toast.error('Vui lòng đồng ý với điều khoản sử dụng');
         return;
       }
+      if (vehicleHeldByOther) {
+        toast.error('Xe đang được giữ chỗ. Vui lòng chọn xe khác hoặc thử lại sau.');
+        return;
+      }
       setCurrentStep(2);
-    } else if (currentStep === 2) {
-      setLoading(true);
-      // Simulate payment processing
-      setTimeout(() => {
-        setShowQR(true);
-        setLoading(false);
-      }, 1000);
-    }
-  };
-
-  const handlePaymentConfirm = async () => {
-    setLoading(true);
-    
-    try {
-      // Call API to create booking
-      const bookingResult = await createBooking();
-      
-      // If successful, move to step 3
-      setCurrentStep(3);
-      setLoading(false);
-      setShowQR(false);
-      toast.success('Đặt xe thành công! Mã booking: ' + (bookingResult?.data?.id || 'N/A'));
-    } catch (error) {
-      setLoading(false);
-      toast.error(error instanceof Error ? error.message : 'Có lỗi xảy ra khi đặt xe');
     }
   };
 
   const pricing = calculatePricing();
+  const qrAmount = paymentDetails?.amount ?? (pricing ? Math.max(Math.round(pricing.totalWithDeposit), 0) : 0);
+  const paymentDescription = paymentDetails?.paymentCode || sanitizeDescription(bookingData.vehicle?.id || bookingId || 'VEHICLEPAYMENT');
+  const qrImageUrl = qrAmount > 0
+    ? `${QR_BASE_URL}?${new URLSearchParams({
+        acc: paymentAccountNumber,
+        bank: paymentBankCode,
+        amount: qrAmount.toString(),
+        des: paymentDescription
+      }).toString()}`
+    : '';
+  const vehicleStatus = (bookingData.vehicle?.status || '').toUpperCase();
+  const isVehicleReserved = vehicleStatus === 'RESERVED';
+  const hasActiveSession = Boolean(bookingId || storedSession);
+  const vehicleHeldByOther = isVehicleReserved && !hasActiveSession;
 
-  if (!bookingData.vehicle || !pricing) {
+  const renderPriceSummary = (options?: { sticky?: boolean }) => {
+    if (!pricing) return null;
+    return (
+      <Card className={options?.sticky ? 'lg:sticky lg:top-24' : ''}>
+        <CardHeader className="pb-3">
+          <CardTitle>Chi tiết giá</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span>Phí thuê xe ({pricing.durationLabel})</span>
+              <span>{formatPrice(pricing.basePrice)}</span>
+            </div>
+            
+            <div className="flex items-center justify-between">
+              <span>Phí bảo hiểm</span>
+              <span>{formatPrice(pricing.insurancePrice)}</span>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <span>Thuế VAT</span>
+              <span>{formatPrice(pricing.vat)}</span>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <span>Tiền cọc</span>
+              <span>{formatPrice(pricing.depositAmount)}</span>
+            </div>
+
+            <Separator />
+
+            <div className="flex items-center justify-between font-semibold">
+              <span>Tổng cộng</span>
+              <span>{formatPrice(pricing.total)}</span>
+            </div>
+
+            <Separator />
+
+            <div className="flex items-center justify-between font-bold text-base">
+              <span>Tổng thanh toán</span>
+              <span className="text-blue-600">{formatPrice(pricing.totalWithDeposit)}</span>
+            </div>
+          </div>
+
+          <div className="text-xs text-gray-500 space-y-1">
+            <p>* Tiền cọc sẽ được trả lại khi hoàn trả xe</p>
+            <p>* Giá đã bao gồm thuế VAT</p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
+
+  if (!bookingData.vehicle) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <h2 className="text-2xl font-bold text-gray-900 mb-2">Không tìm thấy thông tin xe</h2>
           <p className="text-gray-600 mb-4">Vui lòng quay lại và chọn xe để thuê.</p>
           <Button onClick={() => navigate('/')}>Quay lại trang chủ</Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!pricing) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="text-gray-600">Đang tính giá thuê...</p>
         </div>
       </div>
     );
@@ -330,15 +783,20 @@ export function BookingProcess() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
         {/* Main Content */}
-        <div className="lg:col-span-2">
+        <div>
           {currentStep === 1 && (
             <Card>
               <CardHeader>
                 <CardTitle>Xác nhận thông tin đặt xe</CardTitle>
               </CardHeader>
               <CardContent className="space-y-6">
+                {vehicleHeldByOther && (
+                  <div className="p-4 rounded-lg border border-yellow-200 bg-yellow-50 text-sm text-yellow-800">
+                    Xe đang được giữ chỗ bởi người dùng khác. Vui lòng chọn xe khác hoặc quay lại sau khi xe được mở lại.
+                  </div>
+                )}
                 {/* Vehicle Info */}
                 <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-3 sm:space-y-0 sm:space-x-4 p-4 bg-gray-50 rounded-lg">
                   <ImageWithFallback
@@ -370,15 +828,24 @@ export function BookingProcess() {
                   <h3 className="font-medium mb-3">Thời gian thuê xe</h3>
                   {bookingData.rentalDuration ? (
                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="font-medium">Thời gian đã chọn:</span>
-                        <span className="text-blue-600 font-medium">
-                          {bookingData.rentalDuration.days} ngày
-                        </span>
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        <div>Bắt đầu: {bookingData.rentalDuration.startDate} {bookingData.rentalDuration.startTime}</div>
-                        <div>Kết thúc: {bookingData.rentalDuration.endDate} {bookingData.rentalDuration.endTime}</div>
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium">Thời lượng:</span>
+                          <span className="text-blue-600 font-medium">{durationLabel}</span>
+                        </div>
+                        <div className="text-sm text-gray-600">
+                          {bookingData.rentalDuration.startDate === bookingData.rentalDuration.endDate ? (
+                            <>
+                              Thuê ngày {bookingData.rentalDuration.startDate} từ {bookingData.rentalDuration.startTime}
+                              {' '}đến {bookingData.rentalDuration.endTime}
+                            </>
+                          ) : (
+                            <>
+                              Từ {bookingData.rentalDuration.startDate} {bookingData.rentalDuration.startTime}
+                              {' '}đến {bookingData.rentalDuration.endDate} {bookingData.rentalDuration.endTime}
+                            </>
+                          )}
+                        </div>
                       </div>
                       <Button 
                         variant="outline" 
@@ -390,30 +857,61 @@ export function BookingProcess() {
                       </Button>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <Label htmlFor="startDate">Ngày bắt đầu</Label>
-                        <Input
-                          id="startDate"
-                          type="date"
-                          value={bookingData.startDate}
-                          onChange={(e) => handleStartDateChange(e.target.value)}
-                          min={new Date().toISOString().split('T')[0]}
-                          className="mt-1"
-                        />
+                    <>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <div>
+                            <Label htmlFor="startDate">Ngày bắt đầu</Label>
+                            <Input
+                              id="startDate"
+                              type="date"
+                              value={bookingData.startDate}
+                              onChange={(e) => handleStartDateChange(e.target.value)}
+                              min={new Date().toISOString().split('T')[0]}
+                              className="mt-1 h-9 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="startTime">Giờ bắt đầu</Label>
+                            <Input
+                              id="startTime"
+                              type="time"
+                              step={900}
+                              value={bookingData.startTime}
+                              onChange={(e) => handleStartTimeChange(e.target.value)}
+                              className="mt-1 h-9 text-sm"
+                            />
+                          </div>
+                        </div>
+                        <div className="space-y-1.5">
+                          <div>
+                            <Label htmlFor="endDate">Ngày kết thúc</Label>
+                            <Input
+                              id="endDate"
+                              type="date"
+                              value={bookingData.endDate}
+                              onChange={(e) => handleEndDateChange(e.target.value)}
+                              min={bookingData.startDate}
+                              className="mt-1 h-9 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="endTime">Giờ kết thúc</Label>
+                            <Input
+                              id="endTime"
+                              type="time"
+                              step={900}
+                              value={bookingData.endTime}
+                              onChange={(e) => handleEndTimeChange(e.target.value)}
+                              className="mt-1 h-9 text-sm"
+                            />
+                          </div>
+                        </div>
                       </div>
-                      <div>
-                        <Label htmlFor="endDate">Ngày kết thúc</Label>
-                        <Input
-                          id="endDate"
-                          type="date"
-                          value={bookingData.endDate}
-                          onChange={(e) => handleEndDateChange(e.target.value)}
-                          min={bookingData.startDate}
-                          className="mt-1"
-                        />
-                      </div>
-                    </div>
+                      <p className="text-sm text-gray-600 mt-2">
+                        Tổng thời gian dự kiến: {durationLabel}
+                      </p>
+                    </>
                   )}
                 </div>
 
@@ -461,7 +959,7 @@ export function BookingProcess() {
                 <Button
                   onClick={handleNextStep}
                   className="w-full"
-                  disabled={!bookingData.agreementAccepted}
+                  disabled={!bookingData.agreementAccepted || vehicleHeldByOther}
                 >
                   Tiếp tục thanh toán
                 </Button>
@@ -476,75 +974,157 @@ export function BookingProcess() {
               </CardHeader>
               <CardContent className="space-y-6">
                 {!showQR ? (
-                  <>
+                  <div className="text-center space-y-6 py-6">
+                    <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mx-auto"></div>
                     <div>
-                      <h3 className="font-medium mb-3">Phương thức thanh toán</h3>
-                      <div className="space-y-3">
-                        <div className="border rounded-lg p-4 border-blue-600 bg-blue-50">
-                          <div className="flex items-center space-x-3">
-                            <div className="w-4 h-4 bg-blue-600 rounded-full"></div>
-                            <div>
-                              <h4 className="font-medium">Quét mã QR</h4>
-                              <p className="text-sm text-gray-600">Thanh toán qua ví điện tử</p>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+                      <h3 className="text-lg font-semibold">Đang khởi tạo thanh toán</h3>
+                      <p className="text-sm text-gray-600">
+                        Hệ thống đang tạo booking và lấy thông tin thanh toán. Vui lòng đợi trong giây lát...
+                      </p>
                     </div>
-
-                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                      <h4 className="font-medium text-yellow-800 mb-2">Lưu ý về thanh toán</h4>
-                      <p className="text-sm text-yellow-700">
-                        • Tiền cọc 3.000.000đ sẽ được trả lại khi bạn hoàn trả xe thành công.<br/>
-                        • Tiền thế chấp 500.000đ sẽ được hoàn lại khi nhận xe thành công.
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <div className="text-center">
+                      <h3 className="text-xl font-semibold mb-2">Quét mã QR để thanh toán</h3>
+                      <p className="text-gray-600">
+                        Sử dụng ứng dụng ngân hàng hoặc ví điện tử để quét mã và chuyển khoản đúng nội dung
                       </p>
                     </div>
 
-                    <Button
-                      onClick={handleNextStep}
-                      className="w-full"
-                      disabled={loading}
-                    >
-                      {loading ? 'Đang xử lý...' : 'Đồng ý và thanh toán'}
-                    </Button>
-                  </>
-                ) : (
-                  <div className="text-center space-y-6">
-                    <div>
-                      <h3 className="text-xl font-semibold mb-2">Quét mã QR để thanh toán</h3>
-                      <p className="text-gray-600">Sử dụng ứng dụng ngân hàng hoặc ví điện tử để quét mã</p>
-                    </div>
-
-                    <div className="bg-white border-2 border-gray-200 rounded-lg p-8 inline-block">
-                      <div className="w-48 h-48 bg-gray-100 rounded-lg flex items-center justify-center mb-4">
-                        <div className="text-center">
-                          <div className="text-6xl mb-2">📱</div>
-                          <p className="text-sm text-gray-600">QR Code</p>
+                    <div className="flex flex-col gap-6 md:grid md:grid-cols-[minmax(0,1fr)_320px] md:items-start">
+                      <div className="flex flex-col items-center justify-center bg-white border-2 border-gray-200 rounded-lg p-4 w-full max-w-sm mx-auto md:max-w-none md:mx-0">
+                        {qrImageUrl ? (
+                          <img
+                            src={qrImageUrl}
+                            alt="QR thanh toán"
+                            className="w-48 h-48 object-contain"
+                          />
+                        ) : (
+                          <div className="w-48 h-48 bg-gray-100 rounded-lg flex items-center justify-center">
+                            <div className="text-center text-sm text-gray-500">
+                              Không thể tạo QR<br />Vui lòng kiểm tra lại số tiền
+                            </div>
+                          </div>
+                        )}
+                        <div className="text-center mt-4 space-y-1">
+                          <div className="text-xl font-bold text-blue-600">
+                            {paymentDetails
+                              ? formatPrice(paymentDetails.amount)
+                              : pricing
+                                ? formatPrice(pricing.totalWithDeposit)
+                                : '…'}
+                          </div>
+                          <p className="text-xs text-gray-600">
+                            Số tiền cần thanh toán
+                          </p>
+                          {paymentDetails?.status && (
+                            <p className="text-xs font-medium">
+                              Trạng thái: <span className="uppercase">{paymentDetails.status}</span>
+                            </p>
+                          )}
                         </div>
                       </div>
-                      <div className="text-center">
-                        <div className="text-2xl font-bold text-blue-600">
-                          {formatPrice(pricing.total + pricing.depositAmount + pricing.collateral)}
+
+                      <div className="space-y-4">
+                        <div className="space-y-4 bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm">
+                          <div>
+                            <p className="text-xs uppercase text-gray-500">Số tài khoản</p>
+                            <div className="flex flex-wrap items-center justify-between gap-3 mt-1">
+                              <div>
+                                <p className="font-semibold text-gray-900">{paymentAccountNumber}</p>
+                                <p className="text-sm text-gray-600">{paymentAccountName}</p>
+                              </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="flex items-center space-x-2"
+                                onClick={() => copyToClipboard(paymentAccountNumber, 'số tài khoản')}
+                              >
+                                <Copy className="h-4 w-4" />
+                                <span>Sao chép</span>
+                              </Button>
+                            </div>
+                          </div>
+
+                          <div>
+                            <p className="text-xs uppercase text-gray-500">Ngân hàng</p>
+                            <div className="flex items-center justify-between mt-1">
+                              <p className="font-medium text-gray-900">MB Bank ({paymentBankCode})</p>
+                            </div>
+                          </div>
+
+                          <div>
+                            <p className="text-xs uppercase text-gray-500">Nội dung chuyển khoản</p>
+                            <div className="flex flex-wrap items-center justify-between gap-3 mt-1">
+                              <p className="font-mono text-sm text-gray-900">{paymentDescription}</p>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="flex items-center space-x-2"
+                                onClick={() => copyToClipboard(paymentDescription, 'nội dung chuyển khoản')}
+                              >
+                                <Copy className="h-4 w-4" />
+                                <span>Sao chép</span>
+                              </Button>
+                            </div>
+                            <p className="text-xs text-gray-500 mt-1">
+                              Hệ thống tự động ghi nhận khi bạn chuyển khoản đúng nội dung này.
+                            </p>
+                          </div>
+
+                          <div className="p-3 bg-white rounded border border-gray-200 text-xs text-gray-700">
+                            Vui lòng kiểm tra kỹ số tiền và nội dung trước khi chuyển khoản. Hệ thống sẽ tự động
+                            chuyển sang bước tiếp theo ngay khi ghi nhận thanh toán thành công.
+                          </div>
                         </div>
-                        <p className="text-sm text-gray-600">Số tiền cần thanh toán</p>
+
+                        {renderPriceSummary()}
                       </div>
                     </div>
 
                     <div className="space-y-3">
-                      <Button
-                        onClick={handlePaymentConfirm}
-                        className="w-full"
-                        disabled={loading}
-                      >
-                        {loading ? 'Đang xác nhận...' : 'Tôi đã thanh toán'}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => setShowQR(false)}
-                        className="w-full"
-                      >
-                        Quay lại
-                      </Button>
+                      <div className="text-center text-sm text-gray-600">
+                        {paymentStatus === 'confirmed'
+                          ? 'Hệ thống đã ghi nhận thanh toán. Bạn sẽ được chuyển sang bước tiếp theo.'
+                          : 'Sau khi chuyển khoản thành công, hệ thống sẽ tự động xác nhận và chuyển sang bước hoàn tất.'}
+                        <br />
+                        <span className="text-xs text-gray-500 block mt-1">
+                          Trạng thái kết nối:{' '}
+                          {paymentStatus === 'confirmed'
+                            ? 'Đã xác nhận'
+                            : wsStatus === 'connected'
+                              ? 'Đang theo dõi thanh toán'
+                              : wsStatus === 'connecting'
+                                ? 'Đang kết nối...'
+                                : 'Mất kết nối, đang thử lại...'}
+                        </span>
+                      </div>
+                      <div className="space-y-2">
+                        <Button
+                          variant="outline"
+                          onClick={handleRefreshPaymentDetails}
+                          className="w-full"
+                          disabled={paymentLoading || !bookingId}
+                        >
+                          {paymentLoading ? 'Đang làm mới...' : 'Làm mới trạng thái thanh toán'}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={handleEditInformation}
+                          className="w-full"
+                        >
+                          Chỉnh sửa thông tin đặt xe
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          onClick={() => setCancelDialogOpen(true)}
+                          className="w-full"
+                          disabled={!bookingId}
+                        >
+                          Hủy giao dịch
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -579,6 +1159,10 @@ export function BookingProcess() {
                       }
                     </span>
                   </div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm text-gray-600">Tổng thời lượng:</span>
+                    <span>{pricing.durationLabel}</span>
+                  </div>
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-gray-600">Địa điểm nhận xe:</span>
                     <span>{bookingData.vehicle.location}</span>
@@ -599,74 +1183,49 @@ export function BookingProcess() {
         </div>
 
         {/* Price Summary */}
-        <div className="lg:col-span-1">
-          <Card className="sticky top-24">
-            <CardHeader>
-              <CardTitle>Chi tiết giá</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <div className="flex justify-between">
-                  <span>
-                    Phí thuê xe 
-                    {pricing.rentalDays > 1 ? ` (${pricing.rentalDays} ngày)` : ' (1 ngày)'}
-                  </span>
-                  <span>{formatPrice(pricing.basePrice)}</span>
-                </div>
-                
-                {bookingData.insurance && (
-                  <div className="flex justify-between">
-                    <span>Phí bảo hiểm</span>
-                    <span>{formatPrice(pricing.insurancePrice)}</span>
-                  </div>
-                )}
-
-                <div className="flex justify-between">
-                  <span>Thuế VAT (10%)</span>
-                  <span>{formatPrice(pricing.vat)}</span>
-                </div>
-
-                <div className="flex justify-between">
-                  <span>Tiền cọc</span>
-                  <span>{formatPrice(pricing.depositAmount)}</span>
-                </div>
-
-                <div className="flex justify-between text-yellow-600">
-                  <span>Tiền thế chấp</span>
-                  <span>{formatPrice(pricing.collateral)}</span>
-                </div>
-
-                {pricing.discountAmount > 0 && (
-                  <div className="flex justify-between text-green-600">
-                    <span>Giảm giá ({bookingData.discountCode})</span>
-                    <span>-{formatPrice(pricing.discountAmount)}</span>
-                  </div>
-                )}
-
-                <Separator />
-
-                <div className="flex justify-between font-semibold">
-                  <span>Tổng cộng</span>
-                  <span>{formatPrice(pricing.total)}</span>
-                </div>
-
-                <Separator />
-
-                <div className="flex justify-between font-bold text-lg">
-                  <span>Tổng thanh toán</span>
-                  <span className="text-blue-600">{formatPrice(pricing.total + pricing.depositAmount + pricing.collateral)}</span>
-                </div>
-              </div>
-
-              <div className="text-xs text-gray-500 space-y-1">
-                <p>* Tiền cọc sẽ được trả lại khi hoàn trả xe</p>
-                <p>* Tiền thế chấp sẽ được hoàn lại khi nhận xe</p>
-                <p>* Giá đã bao gồm thuế VAT</p>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+        {(!showQR || currentStep !== 2) && (
+          <div>
+            {renderPriceSummary({ sticky: true })}
+          </div>
+        )}
       </div>
+
+      <Dialog open={cancelDialogOpen} onOpenChange={(open) => {
+        setCancelDialogOpen(open);
+        if (!open) {
+          setCancelReason('');
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Hủy giao dịch</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Bạn có chắc chắn muốn hủy giao dịch này? Việc hủy sẽ giải phóng xe và bạn cần tạo lại booking nếu muốn tiếp tục.
+            </p>
+            <div>
+              <Label htmlFor="cancelReason">Lý do hủy (không bắt buộc)</Label>
+              <Textarea
+                id="cancelReason"
+                placeholder="Nhập lý do hủy để chúng tôi hỗ trợ tốt hơn"
+                className="mt-2"
+                rows={4}
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter className="flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2">
+            <Button variant="outline" onClick={() => setCancelDialogOpen(false)} disabled={cancelLoading}>
+              Giữ lại
+            </Button>
+            <Button variant="destructive" onClick={handleCancelBooking} disabled={cancelLoading || !bookingId}>
+              {cancelLoading ? 'Đang hủy...' : 'Xác nhận hủy'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

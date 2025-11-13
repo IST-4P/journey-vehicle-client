@@ -5,6 +5,7 @@ import { Input } from './ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { ScrollArea } from './ui/scroll-area';
 import { Avatar, AvatarFallback } from './ui/avatar';
+import { connectChatSocket } from '../utils/ws-client';
 
 interface Message {
   id: string;
@@ -35,6 +36,34 @@ export function ChatWidget() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Connect to chat socket when widget opens
+  useEffect(() => {
+    if (!isOpen) return;
+    const ws = connectChatSocket();
+    (window as any).__chatSend__ = (payload: any) => ws.send(payload);
+    const offIncoming = ws.on('newChat', (payload: any) => {
+      const incoming: Message = {
+        id: String(Date.now()),
+        content: payload?.content || payload?.message || JSON.stringify(payload),
+        sender: 'bot',
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, incoming]);
+    });
+    const offAny = ws.on('message', (data: any) => {
+      if (data?.type === 'newChat') {
+        const incoming: Message = {
+          id: String(Date.now()),
+          content: data?.data?.content || data?.data?.message || JSON.stringify(data?.data ?? data),
+          sender: 'bot',
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, incoming]);
+      }
+    });
+    return () => { offIncoming(); offAny(); ws.close(); delete (window as any).__chatSend__; };
+  }, [isOpen]);
 
   const quickReplies = [
     'Cách thuê xe?',
@@ -87,7 +116,14 @@ export function ChatWidget() {
     setInputValue('');
     setIsTyping(true);
 
-    // Simulate bot typing delay
+    // Try sending over WebSocket if available
+    try {
+      // Fire-and-forget JSON payload; backend can adapt
+      const payload = { type: 'sendChat', data: { content: content.trim() } };
+      (window as any).__chatSend__?.(payload);
+    } catch {}
+
+    // Fallback simulated bot while backend integration is finalized
     setTimeout(() => {
       const botResponse: Message = {
         id: (Date.now() + 1).toString(),

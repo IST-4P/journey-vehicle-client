@@ -52,6 +52,7 @@ export function CarRental() {
   const [totalPages, setTotalPages] = useState(1);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [models, setModels] = useState<Model[]>([]);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   
   // Filters để hiển thị trong form (chưa áp dụng)
   const [filters, setFilters] = useState({
@@ -86,6 +87,7 @@ export function CarRental() {
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
+      setErrorMessage(null);
       try {
         // Xây dựng query parameters từ filters
         const queryParams = new URLSearchParams({
@@ -99,7 +101,6 @@ export function CarRental() {
           const [minPrice, maxPrice] = appliedFilters.priceRange.split('-');
           queryParams.append('minPrice', minPrice);
           queryParams.append('maxPrice', maxPrice);
-          console.log('Price filter applied:', minPrice, 'to', maxPrice);
         }
 
         if (appliedFilters.seats) {
@@ -126,7 +127,6 @@ export function CarRental() {
         queryParams.append('status', 'ACTIVE');
 
         const apiUrl = `${import.meta.env.VITE_API_BASE_URL}/vehicle?${queryParams.toString()}`;
-        console.log('Fetching vehicles from:', apiUrl);
 
         const response = await fetch(apiUrl, {
           credentials: 'include'
@@ -139,7 +139,7 @@ export function CarRental() {
           if (data.message === "Error.VehicleNotFound") {
             setFilteredCars([]);
             setTotalPages(1);
-            console.log('No vehicles found:', data.message);
+            setErrorMessage('Không tìm thấy xe phù hợp với bộ lọc hiện tại.');
             return;
           }
           
@@ -157,19 +157,16 @@ export function CarRental() {
             );
             
             if (hasVehiclesOutsideRange) {
-              console.log('Server không filter theo giá, filtering client-side...');
               vehicles = vehicles.filter((car: Car) => {
                 const pricePerDay = car.pricePerDay;
                 return pricePerDay >= minPriceNum && pricePerDay <= maxPriceNum;
               });
-            } else {
-              console.log('Server đã filter theo giá thành công');
             }
           }
           
           setFilteredCars(vehicles);
           setTotalPages(data.data.totalPages || 1);
-          console.log('Vehicles after filtering:', vehicles.length);
+          setErrorMessage(null);
         } else {
           // Xử lý các response codes khác (404, 500, etc.)
           const errorData = await response.json().catch(() => null);
@@ -177,91 +174,74 @@ export function CarRental() {
           if (response.status === 404 && errorData?.message === "Error.VehicleNotFound") {
             setFilteredCars([]);
             setTotalPages(1);
-            console.log('No vehicles found (404):', errorData.message);
+            setErrorMessage('Không tìm thấy xe phù hợp với bộ lọc hiện tại.');
           } else {
-            console.error('Failed to fetch vehicles:', response.status);
             setFilteredCars([]);
             setTotalPages(1);
+            setErrorMessage('Không thể tải danh sách xe. Vui lòng thử lại.');
           }
         }
       } catch (error) {
-        console.error('Error fetching cars:', error);
+        setErrorMessage('Không thể tải danh sách xe. Vui lòng thử lại.');
       } finally {
         setLoading(false);
       }
     };
 
+    fetchData();
+  }, [currentPage, appliedFilters]); // Thêm appliedFilters vào dependency array
+
+  useEffect(() => {
     const initializeDriverLicense = async () => {
       try {
         const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/user/driver-license`, { 
           credentials: 'include' 
         });
         
-        if (!response.ok) {
-          if (response.status === 404) {
-            console.log('Driver license not found');
-            return;
-          }
+        if (!response.ok && response.status !== 404) {
           throw new Error(`HTTP ${response.status}`);
         }
-        const data = await response.json();
-        console.log('Driver license data:', data);
-      } catch (error) {
-        console.error('Error fetching driver license:', error);
+      } catch {
+        // Optional info, ignore failures silently
       }
     };
 
-    fetchData();
     initializeDriverLicense();
-  }, [currentPage, appliedFilters]); // Thêm appliedFilters vào dependency array
+  }, []);
 
   // Fetch brands một lần khi component mount
   useEffect(() => {
     const fetchBrands = async () => {
       try {
-        console.log('Fetching brands from:', `${import.meta.env.VITE_API_BASE_URL}/vehicle-brand`);
         const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/vehicle-brand`, { 
           credentials: 'include' 
         });
         
-        console.log('Brands response status:', response.status);
-        
         if (response.ok) {
           const data = await response.json();
-          console.log('Brands response data:', data);
-          console.log('data.data:', data.data);
-          console.log('typeof data.data:', typeof data.data);
           
           // Kiểm tra cấu trúc response và set brands
           if (data.data && data.data.brands && Array.isArray(data.data.brands)) {
-            console.log('Using data.data.brands');
             setBrands(data.data.brands);
           } else if (data.data && Array.isArray(data.data)) {
-            console.log('Using data.data as array');
             setBrands(data.data);
           } else if (Array.isArray(data)) {
-            console.log('Using data as array');
             setBrands(data);
           } else if (data.data && typeof data.data === 'object') {
             // Try to find brands in various nested structures
             const possibleBrands = Object.values(data.data).find(value => Array.isArray(value));
             if (possibleBrands) {
-              console.log('Found brands in nested object:', possibleBrands);
               setBrands(possibleBrands as Brand[]);
             } else {
-              console.warn('Could not find brands array in response:', data);
               setBrands([]);
             }
           } else {
-            console.warn('Unexpected brands response format:', data);
             setBrands([]);
           }
         } else {
-          console.error('Failed to fetch brands:', response.status, response.statusText);
           setBrands([]);
         }
       } catch (error) {
-        console.error('Error fetching brands:', error);
         setBrands([]);
       }
     };
@@ -273,37 +253,27 @@ export function CarRental() {
   useEffect(() => {
     const fetchModels = async () => {
       try {
-        console.log('Fetching models from:', `${import.meta.env.VITE_API_BASE_URL}/vehicle-model`);
         const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/vehicle-model`, { 
           credentials: 'include' 
         });
         
-        console.log('Models response status:', response.status);
-        
         if (response.ok) {
           const data = await response.json();
-          console.log('Models response data:', data);
           
           // Kiểm tra cấu trúc response và set models
           if (data.data && data.data.models && Array.isArray(data.data.models)) {
-            console.log('Using data.data.models');
             setModels(data.data.models);
           } else if (data.data && Array.isArray(data.data)) {
-            console.log('Using data.data as array');
             setModels(data.data);
           } else if (Array.isArray(data)) {
-            console.log('Using data as array');
             setModels(data);
           } else {
-            console.warn('Unexpected models response format:', data);
             setModels([]);
           }
         } else {
-          console.error('Failed to fetch models:', response.status, response.statusText);
           setModels([]);
         }
       } catch (error) {
-        console.error('Error fetching models:', error);
         setModels([]);
       }
     };
@@ -692,9 +662,6 @@ export function CarRental() {
                         `?startDate=${appliedFilters.startDate}&startTime=${appliedFilters.startTime}&endDate=${appliedFilters.endDate}&endTime=${appliedFilters.endTime}` : ''}`}
                       onClick={() => {
                         const targetUrl = `/vehicle/${car.id}`;
-                        console.log('🔗 Link clicked:', targetUrl);
-                        console.log('📍 Current location:', window.location.pathname);
-                        console.log('🚗 Car ID:', car.id);
                         
                         // Test with window.location for debugging
                         // window.location.href = targetUrl;
@@ -796,7 +763,7 @@ export function CarRental() {
             </div>
           )}
 
-          {filteredCars.length === 0 && (
+          {filteredCars.length === 0 && !loading && (
             <div className="text-center py-12">
               <div className="text-gray-400 mb-4">
                 <svg className="mx-auto h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -804,7 +771,7 @@ export function CarRental() {
                 </svg>
               </div>
               <h3 className="text-lg font-medium text-gray-900 mb-2">Không tìm thấy xe</h3>
-              <p className="text-gray-600">Vui lòng thử điều chỉnh bộ lọc để tìm kiếm xe phù hợp.</p>
+              <p className="text-gray-600">{errorMessage || 'Vui lòng thử điều chỉnh bộ lọc để tìm kiếm xe phù hợp.'}</p>
             </div>
           )}
         </div>

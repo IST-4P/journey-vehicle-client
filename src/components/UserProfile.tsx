@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Routes, Route, Link, useLocation } from 'react-router-dom';
 import { 
   User, History, MapPin, CreditCard, MessageSquare, 
   Lock, LogOut, Camera, Star, Eye, Upload, Plus,
-  Check, MessageCircle
+  Check, MessageCircle, Activity, Wifi, Copy,
+  Loader2, AlertCircle
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
@@ -19,6 +20,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { toast } from 'sonner';
 import { uploadAvatarImage, uploadLicenseImages } from '../utils/media-upload';
+import { connectPaymentSocket } from '../utils/ws-client';
 
 // License class enum
 export const LicenseClassEnum = {
@@ -795,279 +797,261 @@ function AccountTab({ user, driver }: { user: User; driver?: Driver | null }) {
   );
 }
 
+interface HistoryItem {
+  id: string;
+  bookingId: string;
+  action: string;
+  notes?: string;
+  createdAt: string;
+}
+
 function HistoryTab() {
-  const [activeTab, setActiveTab] = useState('active');
-  const [showCheckIn, setShowCheckIn] = useState(false);
-  const [showBookingDetail, setShowBookingDetail] = useState(false);
+  const [histories, setHistories] = useState<HistoryItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [pageInfo, setPageInfo] = useState({ page: 1, totalPages: 1 });
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailData, setDetailData] = useState<any>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [selectedHistory, setSelectedHistory] = useState<HistoryItem | null>(null);
+  const limit = 10;
 
-  const activeBookings = [
-    {
-      id: '1',
-      vehicleName: 'Toyota Camry 2023',
-      vehicleImage: 'https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?w=300',
-      startDate: '2024-01-20',
-      endDate: '2024-01-22',
-      totalPrice: 1200000,
-      status: 'active',
-      canCheckIn: true
+  const apiBase = import.meta.env.VITE_API_BASE_URL;
+
+  const formatDateTime = (isoString: string) => {
+    try {
+      return new Intl.DateTimeFormat('vi-VN', {
+        dateStyle: 'medium',
+        timeStyle: 'short'
+      }).format(new Date(isoString));
+    } catch {
+      return isoString;
     }
-  ];
-
-  const completedBookings = [
-    {
-      id: '2',
-      vehicleName: 'Honda City 2023',
-      vehicleImage: 'https://images.unsplash.com/photo-1493238792000-8113da705763?w=300',
-      startDate: '2024-01-10',
-      endDate: '2024-01-12',
-      totalPrice: 950000,
-      status: 'completed',
-      rating: 0
-    }
-  ];
-
-  const formatPrice = (price: number) => {
-    return new Intl.NumberFormat('vi-VN', {
-      style: 'currency',
-      currency: 'VND'
-    }).format(price);
   };
+
+  const actionMeta = (action: string) => {
+    const map: Record<string, { label: string; variant: 'default' | 'secondary' | 'outline' | 'destructive' }> = {
+      CREATED: { label: 'Đã tạo booking', variant: 'secondary' },
+      DEPOSIT_PAID: { label: 'Đã nhận cọc', variant: 'default' },
+      PAYMENT_FAILED: { label: 'Thanh toán thất bại', variant: 'destructive' },
+      CANCELLED: { label: 'Đã hủy', variant: 'destructive' }
+    };
+    return map[action] || { label: action.replace(/_/g, ' '), variant: 'outline' };
+  };
+
+  const fetchHistories = useCallback(async (targetPage = 1, append = false) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `${apiBase}/history?page=${targetPage}&limit=${limit}`,
+        { credentials: 'include' }
+      );
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || `HTTP ${response.status}`);
+      }
+      const json = await response.json();
+      const payload = json.data || {};
+      const list: HistoryItem[] = payload.histories || payload.items || [];
+      setHistories(prev => append ? [...prev, ...list] : list);
+      setPageInfo({
+        page: payload.page || targetPage,
+        totalPages: payload.totalPages || payload.total_pages || 1
+      });
+    } catch (err) {
+      console.error('Error fetching histories:', err);
+      setError(err instanceof Error ? err.message : 'Không thể tải lịch sử giao dịch');
+      if (!append) setHistories([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [apiBase, limit]);
+
+  const fetchHistoryDetail = useCallback(async (historyId: string) => {
+    setDetailLoading(true);
+    setDetailError(null);
+    try {
+      const response = await fetch(`${apiBase}/history/${historyId}`, { credentials: 'include' });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || `HTTP ${response.status}`);
+      }
+      const json = await response.json();
+      setDetailData(json.data || json);
+    } catch (err) {
+      console.error('Error fetching history detail:', err);
+      setDetailError(err instanceof Error ? err.message : 'Không thể tải chi tiết giao dịch');
+      setDetailData(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  }, [apiBase]);
+
+  useEffect(() => {
+    fetchHistories(1, false);
+  }, [fetchHistories]);
+
+  const handleLoadMore = () => {
+    if (!loading && pageInfo.page < pageInfo.totalPages) {
+      fetchHistories(pageInfo.page + 1, true);
+    }
+  };
+
+  const openHistoryDetail = (history: HistoryItem) => {
+    setSelectedHistory(history);
+    setDetailOpen(true);
+    fetchHistoryDetail(history.id);
+  };
+
+  const closeHistoryDetail = () => {
+    setDetailOpen(false);
+    setDetailData(null);
+    setDetailError(null);
+    setSelectedHistory(null);
+  };
+
+  const hasMore = pageInfo.page < pageInfo.totalPages;
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Lịch sử thuê xe</CardTitle>
+        <CardTitle>Lịch sử giao dịch</CardTitle>
+        <p className="text-sm text-gray-600 mt-1">
+          Hiển thị các hoạt động đặt xe mới nhất của bạn (tối đa {limit} mục mỗi trang).
+        </p>
       </CardHeader>
-      <CardContent>
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="active">Đang thuê</TabsTrigger>
-            <TabsTrigger value="completed">Đã thuê</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="active" className="mt-6">
-            <div className="space-y-4">
-              {activeBookings.map((booking) => (
-                <Card key={booking.id}>
-                  <CardContent className="p-4">
-                    <div className="flex items-center space-x-4">
-                      <ImageWithFallback
-                        src={booking.vehicleImage}
-                        alt={booking.vehicleName}
-                        className="w-20 h-20 object-cover rounded-lg"
-                      />
-                      <div className="flex-1">
-                        <h3 className="font-semibold">{booking.vehicleName}</h3>
-                        <p className="text-sm text-gray-600">
-                          {booking.startDate} - {booking.endDate}
-                        </p>
-                        <p className="font-medium text-blue-600">
-                          {formatPrice(booking.totalPrice)}
-                        </p>
-                      </div>
-                      <div className="flex flex-col space-y-2">
-                        <Badge variant="default">Đang thuê</Badge>
-                        <Button size="sm" onClick={() => setShowBookingDetail(true)}>
-                          Chi tiết
-                        </Button>
-                        {booking.canCheckIn && (
-                          <Button size="sm" variant="outline" onClick={() => setShowCheckIn(true)}>
-                            Check-in
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+      <CardContent className="space-y-4">
+        {error && (
+          <div className="flex items-start space-x-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <AlertCircle className="h-4 w-4 mt-0.5" />
+            <div>
+              <p className="font-medium">Không thể tải lịch sử</p>
+              <p>{error}</p>
+              <Button variant="outline" size="sm" className="mt-2" onClick={() => fetchHistories(pageInfo.page, false)}>
+                Thử lại
+              </Button>
             </div>
-          </TabsContent>
+          </div>
+        )}
 
-          <TabsContent value="completed" className="mt-6">
-            <div className="space-y-4">
-              {completedBookings.map((booking) => (
-                <Card key={booking.id}>
-                  <CardContent className="p-4">
-                    <div className="flex items-center space-x-4">
-                      <ImageWithFallback
-                        src={booking.vehicleImage}
-                        alt={booking.vehicleName}
-                        className="w-20 h-20 object-cover rounded-lg"
-                      />
-                      <div className="flex-1">
-                        <h3 className="font-semibold">{booking.vehicleName}</h3>
-                        <p className="text-sm text-gray-600">
-                          {booking.startDate} - {booking.endDate}
-                        </p>
-                        <p className="font-medium text-blue-600">
-                          {formatPrice(booking.totalPrice)}
-                        </p>
-                      </div>
-                      <div className="flex flex-col space-y-2">
-                        <Badge variant="secondary">Đã hoàn thành</Badge>
-                        <Button size="sm" onClick={() => setShowBookingDetail(true)}>
-                          Chi tiết
-                        </Button>
-                        {booking.rating === 0 && (
-                          <RatingForm bookingId={booking.id} />
-                        )}
-                      </div>
+        {loading && histories.length === 0 && (
+          <div className="flex items-center justify-center py-10 text-gray-600">
+            <Loader2 className="h-5 w-5 animate-spin mr-2" />
+            Đang tải lịch sử giao dịch...
+          </div>
+        )}
+
+        {!loading && histories.length === 0 && !error && (
+          <div className="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500">
+            Bạn chưa có giao dịch nào.
+          </div>
+        )}
+
+        <div className="space-y-3">
+          {histories.map((history) => {
+            const meta = actionMeta(history.action);
+            return (
+              <Card key={history.id}>
+                <CardContent className="p-4 flex items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <Badge variant={meta.variant}>{meta.label}</Badge>
+                      <span className="text-xs text-gray-500">{formatDateTime(history.createdAt)}</span>
                     </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </TabsContent>
-        </Tabs>
-
-        {/* Check-in Modal */}
-        <Dialog open={showCheckIn} onOpenChange={setShowCheckIn}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Check-in xe</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <p className="text-gray-600">
-                Vui lòng chụp 5-6 ảnh xe từ các góc độ khác nhau để ghi nhận tình trạng xe.
-              </p>
-              <div className="grid grid-cols-2 gap-4">
-                {[1, 2, 3, 4, 5, 6].map((index) => (
-                  <div key={index} className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center">
-                    <Camera className="h-8 w-8 text-gray-400 mx-auto mb-2" />
-                    <p className="text-sm text-gray-600">Ảnh {index}</p>
-                    <Button variant="outline" size="sm" className="mt-2">
-                      Chụp ảnh
-                    </Button>
+                    <p className="text-sm text-gray-600 mt-2">
+                      {history.notes || 'Không có ghi chú'}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Mã booking: <span className="font-mono">{history.bookingId}</span>
+                    </p>
                   </div>
-                ))}
-              </div>
-              <Button className="w-full">Hoàn tất Check-in</Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+                  <Button variant="outline" size="sm" onClick={() => openHistoryDetail(history)}>
+                    Chi tiết
+                  </Button>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
 
-        {/* Booking Detail Modal */}
-        <Dialog open={showBookingDetail} onOpenChange={setShowBookingDetail}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Chi tiết đặt xe</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="flex items-center space-x-4">
-                <ImageWithFallback
-                  src="https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?w=300"
-                  alt="Toyota Camry"
-                  className="w-20 h-20 object-cover rounded-lg"
-                />
-                <div>
-                  <h3 className="font-semibold">Toyota Camry 2023</h3>
-                  <p className="text-sm text-gray-600">Biển số: 51G-12345</p>
-                </div>
-              </div>
-              
-              <Separator />
-              
-              <div className="space-y-2">
-                <div className="flex justify-between">
-                  <span>Thời gian thuê:</span>
-                  <span>20/01/2024 - 22/01/2024</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Phí thuê xe:</span>
-                  <span>1.000.000đ</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Phí bảo hiểm:</span>
-                  <span>100.000đ</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Thuế VAT:</span>
-                  <span>100.000đ</span>
-                </div>
-                <Separator />
-                <div className="flex justify-between font-semibold">
-                  <span>Tổng cộng:</span>
-                  <span>1.200.000đ</span>
-                </div>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
+        {hasMore && (
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={handleLoadMore}
+            disabled={loading}
+          >
+            {loading ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                Đang tải...
+              </>
+            ) : (
+              'Tải thêm'
+            )}
+          </Button>
+        )}
       </CardContent>
-    </Card>
-  );
-}
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function RatingForm({ bookingId }: { bookingId: string }) {
-  const [rating, setRating] = useState(0);
-  const [comment, setComment] = useState('');
-  const [showForm, setShowForm] = useState(false);
-
-  const handleSubmitRating = () => {
-    if (rating === 0) {
-      toast.error('Vui lòng chọn số sao đánh giá');
-      return;
-    }
-    
-    toast.success('Đánh giá đã được gửi thành công');
-    setShowForm(false);
-  };
-
-  return (
-    <>
-      <Button size="sm" variant="outline" onClick={() => setShowForm(true)}>
-        Đánh giá
-      </Button>
-
-      <Dialog open={showForm} onOpenChange={setShowForm}>
+      <Dialog open={detailOpen} onOpenChange={(open) => !open && closeHistoryDetail()}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Đánh giá chuyến đi</DialogTitle>
+            <DialogTitle>Chi tiết giao dịch</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label>Đánh giá của bạn</Label>
-              <div className="flex space-x-1 mt-2">
-                {[1, 2, 3, 4, 5].map((star) => (
-                  <button
-                    key={star}
-                    onClick={() => setRating(star)}
-                    className="focus:outline-none"
-                  >
-                    <Star 
-                      className={`h-8 w-8 ${
-                        star <= rating ? 'text-yellow-400 fill-current' : 'text-gray-300'
-                      }`} 
-                    />
-                  </button>
-                ))}
+          <div className="space-y-4 text-sm">
+            {detailLoading && (
+              <div className="flex items-center text-gray-600">
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                Đang tải chi tiết...
               </div>
-            </div>
-            
-            <div>
-              <Label htmlFor="comment">Nhận xét</Label>
-              <Textarea
-                id="comment"
-                value={comment}
-                onChange={(e) => setComment(e.target.value)}
-                placeholder="Chia sẻ trải nghiệm của bạn..."
-                rows={4}
-                className="mt-1"
-              />
-            </div>
+            )}
 
-            <Button className="w-full" onClick={handleSubmitRating}>
-              Gửi đánh giá
-            </Button>
+            {detailError && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-red-700 text-sm">
+                {detailError}
+              </div>
+            )}
+
+            {!detailLoading && !detailError && (
+              <>
+                <div>
+                  <p className="text-gray-500">Hành động</p>
+                  <p className="font-medium">{actionMeta(selectedHistory?.action || '').label}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Mã giao dịch</p>
+                  <p className="font-mono">{selectedHistory?.id}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Mã booking</p>
+                  <p className="font-mono">{selectedHistory?.bookingId}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Thời gian</p>
+                  <p>{formatDateTime(selectedHistory?.createdAt || '')}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Ghi chú</p>
+                  <p className="text-gray-700">{detailData?.notes || selectedHistory?.notes || 'Không có ghi chú'}</p>
+                </div>
+                {detailData && typeof detailData === 'object' && (
+                  <div>
+                    <p className="text-gray-500">Dữ liệu bổ sung</p>
+                    <pre className="mt-2 max-h-64 overflow-auto rounded bg-gray-900 text-gray-100 text-xs p-3">
+                      {JSON.stringify(detailData, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </DialogContent>
       </Dialog>
-    </>
+    </Card>
   );
-}
-
-function AddressesTab() {
+}function AddressesTab() {
   const [addresses] = useState([
     {
       id: '1',
@@ -1183,7 +1167,160 @@ function AddressesTab() {
   );
 }
 
+type PaymentStreamEvent = {
+  id: string;
+  paymentCode: string;
+  userId?: string;
+  message?: string;
+  status?: string;
+  amount?: number;
+  type?: string;
+  bookingId?: string;
+  receivedAt: string;
+  raw?: unknown;
+};
+
+const MAX_PAYMENT_EVENTS = 25;
+
+const paymentCurrencyFormatter = new Intl.NumberFormat('vi-VN', {
+  style: 'currency',
+  currency: 'VND'
+});
+
+const isPaymentWsEnabled = () => {
+  const flag = (import.meta.env.VITE_ENABLE_WS ?? 'false').toString().toLowerCase();
+  return flag === 'true' || flag === '1';
+};
+
+const makeEventId = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `evt-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
+
+const parseNumericAmount = (value: unknown): number | undefined => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+};
+
+const normalizePaymentPayload = (payload: any): PaymentStreamEvent | null => {
+  if (!payload) return null;
+  const data = payload.data ?? payload;
+  const paymentCode = data.paymentCode || data.code || data.payment?.code || data.payment_code;
+  const amount = parseNumericAmount(
+    data.amount ??
+    data.paymentAmount ??
+    data.totalAmount ??
+    data.total ??
+    data.deposit ??
+    data.data?.amount
+  );
+  const idSource = data.id || data.paymentId || data.payment?.id || paymentCode;
+
+  return {
+    id: `${idSource || makeEventId()}-${Date.now()}`,
+    paymentCode: (paymentCode || 'UNKNOWN').toString(),
+    userId: data.userId || data.user?.id,
+    message: data.message || data.description || 'Nhận tín hiệu thanh toán',
+    status: data.status || data.paymentStatus || data.message,
+    amount,
+    type: data.type || data.paymentType || data.payment?.type,
+    bookingId: data.bookingId || data.booking?.id,
+    receivedAt: new Date().toISOString(),
+    raw: data,
+  };
+};
+
 function PaymentTab() {
+  const wsSupported = isPaymentWsEnabled();
+  const [events, setEvents] = useState<PaymentStreamEvent[]>([]);
+  const [connectionState, setConnectionState] = useState<'idle' | 'connecting' | 'connected' | 'disconnected'>(
+    wsSupported ? 'idle' : 'disconnected'
+  );
+  const [wsError, setWsError] = useState<string | null>(wsSupported ? null : 'WebSocket chưa được bật (VITE_ENABLE_WS).');
+
+  useEffect(() => {
+    if (!wsSupported) return;
+
+    setConnectionState('connecting');
+    const ws = connectPaymentSocket();
+
+    const handleIncoming = (payload: any) => {
+      const parsed = normalizePaymentPayload(payload);
+      if (!parsed) return;
+      setEvents(prev => {
+        const next = [parsed, ...prev];
+        return next.slice(0, MAX_PAYMENT_EVENTS);
+      });
+      toast.success(`Đã nhận tín hiệu thanh toán ${parsed.paymentCode}`);
+    };
+
+    const unsubOpen = ws.on('open', () => {
+      setConnectionState('connected');
+      setWsError(null);
+    });
+    const unsubClose = ws.on('close', () => {
+      setConnectionState('disconnected');
+    });
+    const unsubError = ws.on('error', () => {
+      setWsError('Không thể kết nối đến kênh thanh toán. Vui lòng kiểm tra token hoặc URL.');
+    });
+    const unsubPayment = ws.on('payment', handleIncoming);
+    const unsubMessage = ws.on('message', handleIncoming);
+
+    return () => {
+      unsubOpen();
+      unsubClose();
+      unsubError();
+      unsubPayment();
+      unsubMessage();
+      ws.close();
+    };
+  }, [wsSupported]);
+
+  const copyValue = async (value: string, label: string) => {
+    if (!value) return;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = value;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      }
+      toast.success(`Đã sao chép ${label}`);
+    } catch (error) {
+      console.error('Copy clipboard failed', error);
+      toast.error('Không thể sao chép. Vui lòng thử lại.');
+    }
+  };
+
+  const clearEvents = () => setEvents([]);
+
+  const statusMap: Record<'idle' | 'connecting' | 'connected' | 'disconnected', {
+    label: string;
+    tone: string;
+    badge: 'default' | 'secondary' | 'destructive' | 'outline';
+  }> = {
+    idle: { label: 'Chưa kết nối', tone: 'text-gray-600', badge: 'outline' },
+    connecting: { label: 'Đang kết nối', tone: 'text-amber-600', badge: 'secondary' },
+    connected: { label: 'Đã kết nối', tone: 'text-green-600', badge: 'default' },
+    disconnected: { label: 'Mất kết nối', tone: 'text-red-600', badge: 'destructive' },
+  };
+
+  const activeStatus = statusMap[connectionState];
+
   return (
     <Card>
       <CardHeader>
@@ -1229,6 +1366,123 @@ function PaymentTab() {
               </div>
             </CardContent>
           </Card>
+        </div>
+
+        <Separator />
+
+        {/* Live Payment Stream */}
+        <div>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <Activity className="h-5 w-5 text-blue-600" />
+              <div>
+                <h3 className="text-lg font-medium">Luồng thanh toán realtime</h3>
+                <p className="text-sm text-gray-600">Theo dõi tín hiệu từ WebSocket /payment</p>
+              </div>
+            </div>
+            <Badge variant={activeStatus.badge} className="flex items-center gap-1">
+              <Wifi className="h-3.5 w-3.5" />
+              {activeStatus.label}
+            </Badge>
+          </div>
+
+          {wsError && (
+            <div className="mt-3 rounded-lg border border-red-100 bg-red-50 p-3 text-sm text-red-700">
+              {wsError}
+            </div>
+          )}
+
+          <div className="mt-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-gray-600">
+                {wsSupported
+                  ? `Hiển thị tối đa ${MAX_PAYMENT_EVENTS} sự kiện mới nhất`
+                  : 'Vui lòng bật WebSocket để sử dụng tính năng này.'}
+              </p>
+              <Button variant="outline" size="sm" onClick={clearEvents} disabled={!events.length}>
+                Xóa log
+              </Button>
+            </div>
+
+            <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+              {events.length === 0 ? (
+                <div className="text-center text-sm text-gray-500 border border-dashed border-gray-300 rounded-lg py-10">
+                  Chưa có tín hiệu thanh toán nào được ghi nhận
+                </div>
+              ) : (
+                events.map((event) => (
+                  <div key={event.id} className="border border-gray-200 rounded-lg p-4 bg-white shadow-sm space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs uppercase text-gray-500 tracking-wide">Mã thanh toán</p>
+                        <p className="font-semibold text-gray-900">{event.paymentCode}</p>
+                      </div>
+                      <Badge variant="outline">{event.status || 'MỚI'}</Badge>
+                    </div>
+                    <p className="text-sm text-gray-600">
+                      {event.message || 'Nhận tín hiệu thanh toán từ webhook'}
+                    </p>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm text-gray-600">
+                      {typeof event.amount === 'number' && (
+                        <div>
+                          <p className="text-xs uppercase text-gray-500">Giá trị</p>
+                          <p className="font-medium text-gray-900">
+                            {paymentCurrencyFormatter.format(event.amount)}
+                          </p>
+                        </div>
+                      )}
+                      {event.type && (
+                        <div>
+                          <p className="text-xs uppercase text-gray-500">Loại thanh toán</p>
+                          <p className="font-medium text-gray-900">{event.type}</p>
+                        </div>
+                      )}
+                      {event.bookingId && (
+                        <div>
+                          <p className="text-xs uppercase text-gray-500">Booking</p>
+                          <p className="font-medium text-gray-900 truncate">{event.bookingId}</p>
+                        </div>
+                      )}
+                      {event.userId && (
+                        <div>
+                          <p className="text-xs uppercase text-gray-500">Người dùng</p>
+                          <p className="font-medium text-gray-900 truncate">{event.userId}</p>
+                        </div>
+                      )}
+                      <div>
+                        <p className="text-xs uppercase text-gray-500">Thời gian</p>
+                        <p className="font-medium text-gray-900">
+                          {new Date(event.receivedAt).toLocaleString('vi-VN')}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 pt-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="flex items-center gap-2"
+                        onClick={() => copyValue(event.paymentCode, 'mã thanh toán')}
+                      >
+                        <Copy className="h-4 w-4" />
+                        Sao chép mã
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="flex items-center gap-2"
+                        onClick={() => copyValue(JSON.stringify(event.raw, null, 2), 'JSON thanh toán')}
+                      >
+                        <Copy className="h-4 w-4" />
+                        Sao chép JSON
+                      </Button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       </CardContent>
     </Card>
