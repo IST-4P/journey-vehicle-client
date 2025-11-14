@@ -589,7 +589,7 @@ export function BookingProcess() {
     setCancelLoading(true);
     try {
       const response = await fetch(`${apiBase}/booking/cancel`, {
-        method: 'POST',
+        method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
         },

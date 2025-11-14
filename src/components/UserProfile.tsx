@@ -15,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Badge } from './ui/badge';
 import { Separator } from './ui/separator';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { toast } from 'sonner';
@@ -816,6 +816,10 @@ function HistoryTab() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [selectedHistory, setSelectedHistory] = useState<HistoryItem | null>(null);
   const limit = 10;
+  const [refundStatuses, setRefundStatuses] = useState<Record<string, { status: string; amount?: number }>>({});
+  const [cancelDialog, setCancelDialog] = useState<{ open: boolean; bookingId?: string }>({ open: false });
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelLoading, setCancelLoading] = useState(false);
 
   const apiBase = import.meta.env.VITE_API_BASE_URL;
 
@@ -889,6 +893,28 @@ function HistoryTab() {
     }
   }, [apiBase]);
 
+  const fetchRefundStatus = useCallback(async (bookingId: string) => {
+    if (!bookingId) return;
+    try {
+      const response = await fetch(`${apiBase}/refund/${bookingId}`, { credentials: 'include' });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || `HTTP ${response.status}`);
+      }
+      const json = await response.json();
+      const payload = json.data || json;
+      setRefundStatuses((prev) => ({
+        ...prev,
+        [bookingId]: {
+          status: payload.status || 'PENDING',
+          amount: payload.amount ?? payload.principal
+        }
+      }));
+    } catch (error) {
+      console.error('Error fetching refund status:', error);
+    }
+  }, [apiBase]);
+
   useEffect(() => {
     fetchHistories(1, false);
   }, [fetchHistories]);
@@ -903,6 +929,7 @@ function HistoryTab() {
     setSelectedHistory(history);
     setDetailOpen(true);
     fetchHistoryDetail(history.id);
+    fetchRefundStatus(history.bookingId);
   };
 
   const closeHistoryDetail = () => {
@@ -913,6 +940,38 @@ function HistoryTab() {
   };
 
   const hasMore = pageInfo.page < pageInfo.totalPages;
+
+  const handleCancelBooking = async () => {
+    if (!cancelDialog.bookingId) return;
+    const reason = cancelReason.trim() || 'User cancelled booking';
+    setCancelLoading(true);
+    try {
+      const response = await fetch(`${apiBase}/booking/cancel`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({ id: cancelDialog.bookingId, cancelReason: reason }),
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || `HTTP ${response.status}`);
+      }
+      toast.success('Đã gửi yêu cầu hủy booking');
+      setCancelDialog({ open: false });
+      setCancelReason('');
+      setRefundStatuses((prev) => ({
+        ...prev,
+        [cancelDialog.bookingId!]: { status: 'PENDING' }
+      }));
+    } catch (error) {
+      console.error('Cancel booking error:', error);
+      toast.error(error instanceof Error ? error.message : 'Không thể hủy booking');
+    } finally {
+      setCancelLoading(false);
+    }
+  };
 
   return (
     <Card>
@@ -952,6 +1011,8 @@ function HistoryTab() {
         <div className="space-y-3">
           {histories.map((history) => {
             const meta = actionMeta(history.action);
+            const refund = refundStatuses[history.bookingId];
+            const canCancel = history.action === 'DEPOSIT_PAID' && !refund && !histories.some((h) => h.bookingId === history.bookingId && h.action === 'CHECKED_IN');
             return (
               <Card key={history.id}>
                 <CardContent className="p-4 flex items-start justify-between gap-4">
@@ -966,10 +1027,34 @@ function HistoryTab() {
                     <p className="text-xs text-gray-500 mt-1">
                       Mã booking: <span className="font-mono">{history.bookingId}</span>
                     </p>
+                    {canCancel && (
+                      <p className="mt-3 text-xs text-gray-600">
+                        Cần hủy chuyến? Bạn có thể yêu cầu hoàn cọc ngay bên dưới.
+                      </p>
+                    )}
+                    {refund && (
+                      <div className={`mt-3 text-xs font-medium ${refund.status.toUpperCase() === 'SUCCESS' ? 'text-green-600' : 'text-red-600'}`}>
+                        Trạng thái hoàn tiền: {refund.status.toUpperCase()}
+                        <span className="block text-[11px] text-gray-500 mt-1">
+                          Tiền sẽ được hoàn trong 1-2 ngày làm việc (không tính cuối tuần và ngày lễ).
+                        </span>
+                      </div>
+                    )}
                   </div>
-                  <Button variant="outline" size="sm" onClick={() => openHistoryDetail(history)}>
-                    Chi tiết
-                  </Button>
+                  <div className="flex flex-col items-end space-y-2">
+                    <Button variant="outline" size="sm" onClick={() => openHistoryDetail(history)}>
+                      Chi tiết
+                    </Button>
+                    {canCancel && (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => setCancelDialog({ open: true, bookingId: history.bookingId })}
+                      >
+                        Hủy booking
+                      </Button>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             );
@@ -1036,12 +1121,15 @@ function HistoryTab() {
                   <p className="text-gray-500">Ghi chú</p>
                   <p className="text-gray-700">{detailData?.notes || selectedHistory?.notes || 'Không có ghi chú'}</p>
                 </div>
-                {detailData && typeof detailData === 'object' && (
+                {selectedHistory?.bookingId && refundStatuses[selectedHistory.bookingId] && (
                   <div>
-                    <p className="text-gray-500">Dữ liệu bổ sung</p>
-                    <pre className="mt-2 max-h-64 overflow-auto rounded bg-gray-900 text-gray-100 text-xs p-3">
-                      {JSON.stringify(detailData, null, 2)}
-                    </pre>
+                    <p className="text-gray-500">Trạng thái hoàn tiền</p>
+                    <p className={`font-medium ${refundStatuses[selectedHistory.bookingId].status.toUpperCase() === 'SUCCESS' ? 'text-green-600' : 'text-red-600'}`}>
+                      {refundStatuses[selectedHistory.bookingId].status.toUpperCase()}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Tiền sẽ được hoàn trong 1-2 ngày làm việc (trừ Thứ 7, CN và ngày lễ).
+                    </p>
                   </div>
                 )}
               </>
@@ -1049,9 +1137,48 @@ function HistoryTab() {
           </div>
         </DialogContent>
       </Dialog>
+      <Dialog open={cancelDialog.open} onOpenChange={(open) => {
+        setCancelDialog((prev) => ({ ...prev, open }));
+        if (!open) {
+          setCancelReason('');
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Hủy booking</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 text-sm">
+            <p className="text-gray-600">
+              Bạn chắc chắn muốn hủy booking <span className="font-mono">{cancelDialog.bookingId}</span>? Tiền cọc sẽ
+              được hoàn lại trong 1-2 ngày làm việc (không tính Thứ 7, CN và ngày lễ).
+            </p>
+            <div>
+              <Label htmlFor="historyCancelReason">Lý do hủy (không bắt buộc)</Label>
+              <Textarea
+                id="historyCancelReason"
+                className="mt-2"
+                rows={3}
+                placeholder="Ví dụ: Thay đổi kế hoạch, đặt nhầm ngày..."
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter className="flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2">
+            <Button variant="outline" onClick={() => setCancelDialog({ open: false })} disabled={cancelLoading}>
+              Đóng
+            </Button>
+            <Button variant="destructive" onClick={handleCancelBooking} disabled={cancelLoading}>
+              {cancelLoading ? 'Đang hủy...' : 'Xác nhận hủy'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
-}function AddressesTab() {
+}
+
+function AddressesTab() {
   const [addresses] = useState([
     {
       id: '1',
