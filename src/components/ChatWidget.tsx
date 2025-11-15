@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Avatar, AvatarFallback } from './ui/avatar';
 import { connectChatSocket } from '../utils/ws-client';
 import { refreshAccessToken } from '../utils/auth';
+import { ComplaintModal } from './ComplaintModal';
 
 interface ServerChatMessage {
   id?: string;
@@ -50,6 +51,7 @@ export function ChatWidget() {
   const [isAuthChecking, setIsAuthChecking] = useState(false);
   const [chatSocket, setChatSocket] =
     useState<ReturnType<typeof connectChatSocket> | null>(null);
+  const [isComplaintOpen, setIsComplaintOpen] = useState(false);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isFetchingRef = useRef(false);
@@ -338,14 +340,17 @@ export function ChatWidget() {
 
   if (!isOpen) {
     return (
-      <div className="fixed bottom-6 right-6 z-50">
-        <Button
-          onClick={() => setIsOpen(true)}
-          className="rounded-full w-14 h-14 shadow-lg hover:shadow-xl transition-shadow bg-blue-600 hover:bg-blue-700"
-        >
-          <MessageCircle className="h-6 w-6" />
-        </Button>
-      </div>
+      <>
+        <div className="fixed bottom-6 right-6 z-50">
+          <Button
+            onClick={() => setIsOpen(true)}
+            className="rounded-full w-14 h-14 shadow-lg hover:shadow-xl transition-shadow bg-blue-600 hover:bg-blue-700"
+          >
+            <MessageCircle className="h-6 w-6" />
+          </Button>
+        </div>
+        <ComplaintModal open={isComplaintOpen} onClose={setIsComplaintOpen} />
+      </>
     );
   }
 
@@ -398,12 +403,13 @@ export function ChatWidget() {
   ];
 
   return (
-    <div className="fixed bottom-6 right-6 z-50">
-      <Card
-        className={`w-80 border shadow-xl transition-all duration-300 ${
-          isMinimized ? 'h-14' : 'h-[500px]'
-        } flex flex-col rounded-xl bg-white`}
-      >
+    <>
+      <div className="fixed bottom-6 right-6 z-50">
+        <Card
+          className={`w-80 border shadow-xl transition-all duration-300 ${
+            isMinimized ? 'h-14' : 'h-[500px]'
+          } flex flex-col rounded-xl bg-white`}
+        >
         <CardHeader className="flex-shrink-0 px-4 py-3 bg-blue-600 text-white rounded-t-lg">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
@@ -481,21 +487,31 @@ export function ChatWidget() {
               ) : (
                 <>
                   {renderMessages()}
-                  <div className="flex-shrink-0 px-4 py-2 border-t border-gray-200">
-                    <div className="text-xs text-gray-500 mb-2">Câu hỏi gợi ý:</div>
-                    <div className="flex flex-wrap gap-1">
-                      {quickReplies.map((reply) => (
-                        <Button
-                          key={reply}
-                          variant="outline"
-                          size="sm"
-                          className="text-xs h-6 px-2"
-                          onClick={() => handleQuickReply(reply)}
-                        >
-                          {reply}
-                        </Button>
-                      ))}
+                  <div className="flex-shrink-0 px-4 py-3 border-t border-gray-200 bg-gray-50 space-y-2">
+                    <div>
+                      <div className="text-xs text-gray-500 mb-1">Câu hỏi gợi ý:</div>
+                      <div className="flex flex-wrap gap-1">
+                        {quickReplies.map((reply) => (
+                          <Button
+                            key={reply}
+                            variant="outline"
+                            size="sm"
+                            className="text-xs h-6 px-2"
+                            onClick={() => handleQuickReply(reply)}
+                          >
+                            {reply}
+                          </Button>
+                        ))}
+                      </div>
                     </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full text-xs"
+                      onClick={() => setIsComplaintOpen(true)}
+                    >
+                      Mở khiếu nại / trao đổi với hỗ trợ
+                    </Button>
                   </div>
                   <div className="flex-shrink-0 p-4 border-t border-gray-200">
                     <div className="flex space-x-2">
@@ -524,7 +540,9 @@ export function ChatWidget() {
             </CardContent>
           </>
         )}
-      </Card>
-    </div>
+        </Card>
+      </div>
+      <ComplaintModal open={isComplaintOpen} onClose={setIsComplaintOpen} />
+    </>
   );
 }
