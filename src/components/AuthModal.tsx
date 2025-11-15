@@ -5,6 +5,7 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { toast } from 'sonner';
 import { errorMessages } from '../config/errorMessages';
+import { dispatchTokenChangeEvent } from '../utils/auth';
 
 
 interface AuthModalProps {
@@ -178,7 +179,7 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
 
   const handleLogin = async () => {
     if (!validateForm()) return;
-    
+
     setLoading(true);
     try {
       const apiBaseUrl = import.meta.env.VITE_API_BASE_URL;
@@ -201,12 +202,84 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
         toast.error(message);
         return;
       }
-      // Lưu token vào localStorage nếu có
+
+      // Xử lý nhiều cấu trúc response khác nhau
+      // Có thể là: result.accessToken, result.data.accessToken, result.data.access_token
+      let accessToken: string | null = null;
+      let refreshToken: string | null = null;
+
       if (result.accessToken) {
-        localStorage.setItem('accessToken', result.accessToken);
+        accessToken = result.accessToken;
+      } else if (result.data?.accessToken) {
+        accessToken = result.data.accessToken;
+      } else if (result.data?.access_token) {
+        accessToken = result.data.access_token;
       }
+
       if (result.refreshToken) {
-        localStorage.setItem('refreshToken', result.refreshToken);
+        refreshToken = result.refreshToken;
+      } else if (result.data?.refreshToken) {
+        refreshToken = result.data.refreshToken;
+      } else if (result.data?.refresh_token) {
+        refreshToken = result.data.refresh_token;
+      }
+
+      // FIX: Nếu API không trả token trong body (cookie-based auth), gọi refresh-token để lấy token
+      if (!accessToken) {
+        console.log('[AuthModal] No token in response body, trying refresh-token endpoint...');
+        try {
+          const refreshResponse = await fetch(`${apiBaseUrl}/auth/refresh-token`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          });
+
+          if (refreshResponse.ok) {
+            const refreshResult = await refreshResponse.json();
+            console.log('[AuthModal] Refresh-token response:', refreshResult);
+
+            const tokens = refreshResult?.data ?? refreshResult;
+            accessToken = tokens?.accessToken ?? tokens?.access_token ?? tokens?.token ?? null;
+            refreshToken = tokens?.refreshToken ?? tokens?.refresh_token ?? null;
+
+            console.log('[AuthModal] Extracted tokens - accessToken:', accessToken ? 'exists' : 'null', 'refreshToken:', refreshToken ? 'exists' : 'null');
+          } else {
+            console.error('[AuthModal] Refresh-token failed with status:', refreshResponse.status);
+          }
+        } catch (refreshError) {
+          console.error('[AuthModal] Failed to get token from refresh endpoint:', refreshError);
+        }
+      }
+
+      // Lưu token vào localStorage nếu có
+      if (accessToken) {
+        localStorage.setItem('accessToken', accessToken);
+        console.log('[AuthModal] Access token saved to localStorage');
+        // FIX: Dùng helper function để dispatch cả 2 events
+        dispatchTokenChangeEvent(accessToken);
+      } else {
+        // FIX: Nếu API dùng pure cookie-based auth, dispatch event với flag đặc biệt
+        console.log('[AuthModal] Pure cookie-based auth detected, dispatching cookieAuth event');
+        localStorage.setItem('cookieAuth', 'true');
+
+        // Dispatch cookieAuth storage event riêng
+        window.dispatchEvent(
+          new StorageEvent('storage', {
+            key: 'cookieAuth',
+            newValue: 'true',
+            oldValue: null,
+          }),
+        );
+
+        // Dispatch CustomEvent để ChatWidget biết user đã authenticated
+        dispatchTokenChangeEvent('COOKIE_AUTH'); // Special marker
+      }
+
+      if (refreshToken) {
+        localStorage.setItem('refreshToken', refreshToken);
+        console.log('[AuthModal] Refresh token saved to localStorage');
       }
 
       toast.success('Đăng nhập thành công!');

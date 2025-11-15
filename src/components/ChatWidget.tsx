@@ -1,155 +1,340 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { MessageCircle, X, Send, User, Bot, Minimize2 } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { MessageCircle, X, Send, Bot, Minimize2 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { ScrollArea } from './ui/scroll-area';
 import { Avatar, AvatarFallback } from './ui/avatar';
 import { connectChatSocket } from '../utils/ws-client';
+import { refreshAccessToken } from '../utils/auth';
 
-interface Message {
+interface ServerChatMessage {
+  id?: string;
+  fromUserId: string;
+  toUserId: string;
+  content: string;
+  createdAt?: string;
+}
+
+interface ChatMessage {
   id: string;
   content: string;
-  sender: 'user' | 'bot';
+  fromUserId: string;
+  toUserId: string;
   timestamp: Date;
+  isOutgoing: boolean;
 }
+
+const SUPPORT_USER_ID =
+  import.meta.env.VITE_SUPPORT_USER_ID ?? '4d991046-125d-4ed3-a5d7-b3f101768e4e';
+const CHAT_PAGE_SIZE = 10;
+
+const getStoredAccessToken = () => {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('accessToken');
+};
+
+const formatTime = (date: Date) =>
+  date.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 
 export function ChatWidget() {
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '1',
-      content: 'Xin chào! Tôi là trợ lý ảo của HacMieu Journey. Tôi có thể giúp gì cho bạn hôm nay?',
-      sender: 'bot',
-      timestamp: new Date()
-    }
-  ]);
+  const [stage, setStage] = useState<'intro' | 'chat' | 'login'>('intro');
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [isInitialLoading, setIsInitialLoading] = useState(false);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [isAuthChecking, setIsAuthChecking] = useState(false);
+  const [chatSocket, setChatSocket] =
+    useState<ReturnType<typeof connectChatSocket> | null>(null);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const isFetchingRef = useRef(false);
+  const shouldStickToBottomRef = useRef(true);
+
+  const scrollToBottom = (
+    behavior: ScrollBehavior = 'smooth',
+    force = false,
+  ) => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    if (!force && !shouldStickToBottomRef.current) return;
+    container.scrollTo({ top: container.scrollHeight, behavior });
   };
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+  const mapServerMessage = useCallback((msg: ServerChatMessage): ChatMessage => {
+    const timestamp = msg.createdAt ? new Date(msg.createdAt) : new Date();
+    return {
+      id: msg.id || `${msg.fromUserId}-${timestamp.getTime()}`,
+      content: msg.content,
+      fromUserId: msg.fromUserId,
+      toUserId: msg.toUserId,
+      timestamp,
+      isOutgoing: msg.fromUserId !== SUPPORT_USER_ID,
+    };
+  }, []);
 
-  // Connect to chat socket when widget opens
-  useEffect(() => {
-    if (!isOpen) return;
-    const ws = connectChatSocket();
-    (window as any).__chatSend__ = (payload: any) => ws.send(payload);
-    const offIncoming = ws.on('newChat', (payload: any) => {
-      const incoming: Message = {
-        id: String(Date.now()),
-        content: payload?.content || payload?.message || JSON.stringify(payload),
-        sender: 'bot',
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, incoming]);
-    });
-    const offAny = ws.on('message', (data: any) => {
-      if (data?.type === 'newChat') {
-        const incoming: Message = {
-          id: String(Date.now()),
-          content: data?.data?.content || data?.data?.message || JSON.stringify(data?.data ?? data),
-          sender: 'bot',
-          timestamp: new Date(),
-        };
-        setMessages((prev) => [...prev, incoming]);
+  const fetchMessages = useCallback(
+    async (targetPage: number, { replace }: { replace?: boolean } = {}) => {
+      if (!accessToken || isFetchingRef.current) return;
+      const apiBase = import.meta.env.VITE_API_BASE_URL;
+      if (!apiBase) return;
+
+      isFetchingRef.current = true;
+      if (replace) {
+        setIsInitialLoading(true);
+      } else {
+        setIsLoadingOlder(true);
       }
-    });
-    return () => { offIncoming(); offAny(); ws.close(); delete (window as any).__chatSend__; };
-  }, [isOpen]);
 
-  const quickReplies = [
-    'Cách thuê xe?',
-    'Giá cả như thế nào?',
-    'Chính sách hủy xe?',
-    'Liên hệ hỗ trợ'
-  ];
+      try {
+        const url = new URL(`${apiBase}/chat`);
+        url.searchParams.set('toUserId', SUPPORT_USER_ID);
+        url.searchParams.set('page', targetPage.toString());
+        url.searchParams.set('limit', CHAT_PAGE_SIZE.toString());
 
-  const botResponses: { [key: string]: string } = {
-    'cách thuê xe': 'Để thuê xe, bạn có thể:\\n1. Chọn loại xe (ô tô/xe máy)\\n2. Chọn thời gian thuê\\n3. Điền thông tin và thanh toán\\n4. Nhận xe tại địa điểm đã chọn',
-    'giá': 'Giá thuê xe phụ thuộc vào loại xe và thời gian:\\n- Xe máy: từ 25.000đ/giờ\\n- Ô tô: từ 120.000đ/giờ\\nBạn có thể xem giá chi tiết khi chọn xe.',
-    'hủy': 'Chính sách hủy xe:\\n- Miễn phí hủy trước 24h\\n- Phí hủy 50% nếu hủy trong 24h\\n- Không hoàn tiền nếu hủy trong 2h',
-    'liên hệ': 'Bạn có thể liên hệ với chúng tôi qua:\\n📞 Hotline: +84 123 456 789\\n📧 Email: support@hacmieujourney.com\\n🕒 Hỗ trợ 24/7',
-    'default': 'Cảm ơn bạn đã liên hệ! Để được hỗ trợ tốt nhất, vui lòng gọi hotline +84 123 456 789 hoặc email support@hacmieujourney.com'
+        const res = await fetch(url.toString(), {
+          method: 'GET',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+        });
+
+        if (!res.ok) {
+          throw new Error(`Failed to fetch chat history (${res.status})`);
+        }
+
+        const body = await res.json();
+        const chats: ServerChatMessage[] = body?.data?.chats ?? [];
+        const mapped = chats.map(mapServerMessage);
+        mapped.sort(
+          (a, b) => a.timestamp.getTime() - b.timestamp.getTime(),
+        );
+
+        if (replace) {
+          setMessages(mapped);
+          setPage(targetPage);
+          setHasMore(chats.length === CHAT_PAGE_SIZE);
+          requestAnimationFrame(() => scrollToBottom('auto', true));
+        } else {
+          const container = scrollContainerRef.current;
+          const prevScrollHeight = container?.scrollHeight ?? 0;
+          const prevScrollTop = container?.scrollTop ?? 0;
+
+          setMessages((prev) => {
+            const existingIds = new Set(prev.map((msg) => msg.id));
+            const merged = [
+              ...mapped.filter((msg) => !existingIds.has(msg.id)),
+              ...prev,
+            ];
+            return merged;
+          });
+
+          requestAnimationFrame(() => {
+            const el = scrollContainerRef.current;
+            if (!el) return;
+            const newScrollHeight = el.scrollHeight;
+            el.scrollTop = newScrollHeight - prevScrollHeight + prevScrollTop;
+          });
+
+          setPage(targetPage);
+          setHasMore(chats.length === CHAT_PAGE_SIZE);
+        }
+      } catch (error) {
+        console.error('Load chat history failed:', error);
+      } finally {
+        isFetchingRef.current = false;
+        if (replace) {
+          setIsInitialLoading(false);
+        } else {
+          setIsLoadingOlder(false);
+        }
+      }
+    },
+    [accessToken, mapServerMessage],
+  );
+
+  const handleIncomingMessage = useCallback(
+    (incoming: ServerChatMessage) => {
+      const mapped = mapServerMessage(incoming);
+      setMessages((prev) => {
+        if (prev.some((msg) => msg.id === mapped.id)) {
+          return prev;
+        }
+        return [...prev, mapped];
+      });
+      shouldStickToBottomRef.current = true;
+      requestAnimationFrame(() => scrollToBottom());
+    },
+    [mapServerMessage],
+  );
+
+  const handleSendMessage = (content: string) => {
+    if (!content.trim() || !accessToken) return;
+    const trimmed = content.trim();
+
+    setInputValue('');
+    shouldStickToBottomRef.current = true;
+    requestAnimationFrame(() => scrollToBottom());
+
+    const socket = chatSocket?.socket;
+    if (socket && 'emit' in socket && typeof socket.emit === 'function') {
+      socket.emit('sendChat', {
+        toUserId: SUPPORT_USER_ID,
+        content: trimmed,
+      });
+    } else {
+      console.error('[ChatWidget] Socket is not available or does not support emit');
+    }
   };
 
-  const getBotResponse = (userMessage: string): string => {
-    const message = userMessage.toLowerCase();
-    
-    if (message.includes('thuê') || message.includes('đặt')) {
-      return botResponses['cách thuê xe'];
-    }
-    if (message.includes('giá') || message.includes('tiền') || message.includes('phí')) {
-      return botResponses['giá'];
-    }
-    if (message.includes('hủy') || message.includes('huỷ')) {
-      return botResponses['hủy'];
-    }
-    if (message.includes('liên hệ') || message.includes('hotline') || message.includes('hỗ trợ')) {
-      return botResponses['liên hệ'];
-    }
-    if (message.includes('xin chào') || message.includes('hello') || message.includes('hi')) {
-      return 'Xin chào! Rất vui được hỗ trợ bạn. Bạn cần tư vấn về dịch vụ thuê xe nào?';
-    }
-    
-    return botResponses['default'];
-  };
+  const handleQuickReply = (text: string) => handleSendMessage(text);
 
-  const handleSendMessage = async (content: string) => {
-    if (!content.trim()) return;
+  const handleScroll = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
 
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      content: content.trim(),
-      sender: 'user',
-      timestamp: new Date()
+    const nearTop = container.scrollTop < 40;
+    const nearBottom =
+      container.scrollHeight -
+        container.scrollTop -
+        container.clientHeight <
+      40;
+    shouldStickToBottomRef.current = nearBottom;
+
+    if (
+      nearTop &&
+      hasMore &&
+      !isLoadingOlder &&
+      !isInitialLoading &&
+      accessToken
+    ) {
+      fetchMessages(page + 1);
+    }
+  }, [
+    fetchMessages,
+    hasMore,
+    isLoadingOlder,
+    isInitialLoading,
+    page,
+    accessToken,
+  ]);
+
+  const handleSupportClick = useCallback(async () => {
+    if (isAuthChecking) return;
+    setIsAuthChecking(true);
+
+    // FIX: Thử refresh token để lấy accessToken (cho cookie-based auth)
+    const success = await refreshAccessToken();
+    if (success) {
+      const token = getStoredAccessToken();
+      console.log('[ChatWidget] Support click - got token:', token ? 'Token exists' : 'No token');
+      setAccessToken(token);
+      setStage('chat');
+    } else {
+      console.log('[ChatWidget] Support click - no valid session, show login');
+      setStage('login');
+    }
+    setIsAuthChecking(false);
+  }, []);
+
+  // FIX 1: Lắng nghe storage event + CustomEvent
+  // Thêm delay để đảm bảo event được phát ra trước khi component mount
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'accessToken') {
+        const newToken = e.newValue;
+        console.log('[ChatWidget] Storage changed:', newToken ? 'Token exists' : 'Token removed');
+        setAccessToken(newToken);
+      }
+      // FIX: Lắng nghe cookieAuth flag
+      if (e.key === 'cookieAuth' && e.newValue === 'true') {
+        console.log('[ChatWidget] Cookie-based auth detected');
+        setAccessToken('COOKIE_AUTH'); // Special marker
+      }
     };
 
-    setMessages(prev => [...prev, userMessage]);
-    setInputValue('');
-    setIsTyping(true);
+    // FIX 2: Dùng (event as CustomEvent) để fix TypeScript
+    const handleTokenChanged = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      const token = customEvent?.detail?.token ?? null;
+      console.log('[ChatWidget] AccessTokenChanged event fired:', token ? 'Token exists' : 'Token removed');
+      setAccessToken(token);
+    };
 
-    // Try sending over WebSocket if available
-    try {
-      // Fire-and-forget JSON payload; backend can adapt
-      const payload = { type: 'sendChat', data: { content: content.trim() } };
-      (window as any).__chatSend__?.(payload);
-    } catch {}
+    // Check token ngay khi component mount
+    const token = getStoredAccessToken();
+    const cookieAuth = localStorage.getItem('cookieAuth');
 
-    // Fallback simulated bot while backend integration is finalized
-    setTimeout(() => {
-      const botResponse: Message = {
-        id: (Date.now() + 1).toString(),
-        content: getBotResponse(content),
-        sender: 'bot',
-        timestamp: new Date()
-      };
-
-      setMessages(prev => [...prev, botResponse]);
-      setIsTyping(false);
-    }, 1000 + Math.random() * 1000);
-  };
-
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSendMessage(inputValue);
+    if (cookieAuth === 'true') {
+      console.log('[ChatWidget] Initial check: Cookie-based auth detected');
+      setAccessToken('COOKIE_AUTH');
+    } else if (token) {
+      console.log('[ChatWidget] Initial token check: Token exists');
+      setAccessToken(token);
+    } else {
+      console.log('[ChatWidget] Initial token check: No token');
     }
-  };
 
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString('vi-VN', { 
-      hour: '2-digit', 
-      minute: '2-digit' 
-    });
-  };
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('accessTokenChanged', handleTokenChanged);
+
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('accessTokenChanged', handleTokenChanged);
+    };
+  }, []);
+
+  // Transition between stages when token state changes
+  useEffect(() => {
+    if (!accessToken && stage === 'chat') {
+      setStage('intro');
+    }
+    if (accessToken && (stage === 'login' || stage === 'intro')) {
+      setStage('chat');
+    }
+  }, [accessToken, stage]);
+
+  // Auto connect socket when widget opens & authenticated
+  useEffect(() => {
+    if (!isOpen || !accessToken || stage !== 'chat') return;
+
+    const socketClient = connectChatSocket();
+    setChatSocket(socketClient);
+
+    const offNewChat = socketClient.on('newChat', (payload: ServerChatMessage) =>
+      handleIncomingMessage(payload),
+    );
+
+    return () => {
+      offNewChat();
+      socketClient.close();
+      setChatSocket(null);
+    };
+  }, [isOpen, accessToken, stage, handleIncomingMessage]);
+
+  // Load initial messages each time widget opens in chat mode
+  useEffect(() => {
+    if (!isOpen || !accessToken || stage !== 'chat') return;
+    setPage(1);
+    setHasMore(true);
+    fetchMessages(1, { replace: true });
+  }, [isOpen, accessToken, stage, fetchMessages]);
+
+  // Attach scroll listener
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    container.addEventListener('scroll', handleScroll);
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [handleScroll, isOpen]);
+
+  const isAuthenticated = stage === 'chat' && Boolean(accessToken);
 
   if (!isOpen) {
     return (
@@ -164,10 +349,62 @@ export function ChatWidget() {
     );
   }
 
+  const renderMessages = () => (
+    <div
+      ref={scrollContainerRef}
+      className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0"
+    >
+      {isLoadingOlder && (
+        <div className="text-center text-xs text-gray-500">Đang tải...</div>
+      )}
+
+      {messages.map((message) => (
+        <div
+          key={message.id}
+          className={`flex items-end gap-2 ${
+            message.isOutgoing ? 'justify-end' : 'justify-start'
+          }`}
+        >
+          {!message.isOutgoing && (
+            <Avatar className="h-6 w-6 flex-shrink-0">
+              <AvatarFallback className="bg-blue-100">
+                <Bot className="h-3 w-3 text-blue-600" />
+              </AvatarFallback>
+            </Avatar>
+          )}
+          <div className={`flex flex-col ${message.isOutgoing ? 'items-end' : 'items-start'}`}>
+            <div
+              className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
+                message.isOutgoing
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-100 text-gray-900'
+              }`}
+            >
+              <div>{message.content}</div>
+            </div>
+            <div className="text-xs text-gray-500 mt-1 px-1">
+              {formatTime(message.timestamp)}
+            </div>
+          </div>
+        </div>
+      ))}
+      <div />
+    </div>
+  );
+
+  const quickReplies = [
+    'Cách thuê xe?',
+    'Liên hệ hỗ trợ',
+  ];
+
   return (
     <div className="fixed bottom-6 right-6 z-50">
-      <Card className={`w-80 shadow-xl transition-all duration-300 ${isMinimized ? 'h-16' : 'h-[500px]'} flex flex-col`}>
-        <CardHeader className="flex-shrink-0 pb-3 px-4 py-3 bg-blue-600 text-white rounded-t-lg">
+      <Card
+        className={`w-80 border shadow-xl transition-all duration-300 ${
+          isMinimized ? 'h-14' : 'h-[500px]'
+        } flex flex-col rounded-xl bg-white`}
+      >
+        <CardHeader className="flex-shrink-0 px-4 py-3 bg-blue-600 text-white rounded-t-lg">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <Avatar className="h-8 w-8">
@@ -192,7 +429,12 @@ export function ChatWidget() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setIsOpen(false)}
+                onClick={() => {
+                  setIsOpen(false);
+                  setStage('intro');
+                  setIsAuthChecking(false);
+                  setMessages([]);
+                }}
                 className="h-8 w-8 p-0 text-white hover:bg-blue-500"
               >
                 <X className="h-4 w-4" />
@@ -202,106 +444,85 @@ export function ChatWidget() {
         </CardHeader>
 
         {!isMinimized && (
-          <CardContent className="p-0 flex flex-col flex-1 min-h-0">
-            {/* Messages Area */}
-            <ScrollArea className="flex-1 min-h-0">
-              <div className="p-4 space-y-4">
-                {messages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+          <>
+            <CardContent className="p-0 flex flex-col flex-1 min-h-0">
+              {stage === 'intro' ? (
+                <div className="flex flex-1 flex-col items-center justify-center space-y-4 px-6 text-center">
+                  <p className="text-sm font-medium text-gray-800 leading-relaxed">
+                    Nhấn "Tôi cần hỗ trợ" để kết nối với đội ngũ chăm sóc khách hàng.
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    Chúng tôi sẽ kiểm tra phiên đăng nhập của bạn trước khi mở chat.
+                  </p>
+                  <Button
+                    className="bg-white text-blue-600 border border-blue-200 hover:bg-blue-50"
+                    disabled={isAuthChecking}
+                    onClick={handleSupportClick}
                   >
-                    <div className={`flex items-start space-x-2 max-w-[80%] ${message.sender === 'user' ? 'flex-row-reverse space-x-reverse' : ''}`}>
-                      <Avatar className="h-6 w-6 flex-shrink-0">
-                        <AvatarFallback className={message.sender === 'user' ? 'bg-gray-300' : 'bg-blue-100'}>
-                          {message.sender === 'user' ? <User className="h-3 w-3" /> : <Bot className="h-3 w-3 text-blue-600" />}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div>
-                        <div
-                          className={`px-3 py-2 rounded-lg text-sm ${
-                            message.sender === 'user'
-                              ? 'bg-blue-600 text-white'
-                              : 'bg-gray-100 text-gray-900'
-                          }`}
-                        >
-                          {message.content.split('\\n').map((line, index) => (
-                            <div key={index}>{line}</div>
-                          ))}
-                        </div>
-                        <div className="text-xs text-gray-500 mt-1 px-1">
-                          {formatTime(message.timestamp)}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-                
-                {isTyping && (
-                  <div className="flex justify-start">
-                    <div className="flex items-start space-x-2">
-                      <Avatar className="h-6 w-6">
-                        <AvatarFallback className="bg-blue-100">
-                          <Bot className="h-3 w-3 text-blue-600" />
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="bg-gray-100 px-3 py-2 rounded-lg">
-                        <div className="flex space-x-1">
-                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                
-                <div ref={messagesEndRef} />
-              </div>
-            </ScrollArea>
-
-            {/* Quick Replies */}
-            {messages.length === 1 && (
-              <div className="flex-shrink-0 px-4 py-2 border-t border-gray-200">
-                <div className="text-xs text-gray-500 mb-2">Câu hỏi gợi ý:</div>
-                <div className="flex flex-wrap gap-1">
-                  {quickReplies.map((reply, index) => (
-                    <Button
-                      key={index}
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleSendMessage(reply)}
-                      className="text-xs h-6 px-2"
-                    >
-                      {reply}
-                    </Button>
-                  ))}
+                    {isAuthChecking ? 'Đang kiểm tra...' : 'Tôi cần hỗ trợ'}
+                  </Button>
                 </div>
-              </div>
-            )}
-
-            {/* Input Area */}
-            <div className="flex-shrink-0 p-4 border-t border-gray-200">
-              <div className="flex space-x-2">
-                <Input
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  onKeyPress={handleKeyPress}
-                  placeholder="Nhập tin nhắn..."
-                  className="flex-1 text-sm"
-                  disabled={isTyping}
-                />
-                <Button
-                  onClick={() => handleSendMessage(inputValue)}
-                  size="sm"
-                  disabled={!inputValue.trim() || isTyping}
-                  className="px-3"
-                >
-                  <Send className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          </CardContent>
+              ) : stage === 'login' ? (
+                <div className="flex flex-1 flex-col items-center justify-center space-y-4 px-6 text-center">
+                  <p className="text-sm font-medium text-gray-800 leading-relaxed">
+                    Bạn cần đăng nhập để trò chuyện với đội ngũ HacMieu.
+                  </p>
+                  <Button
+                    onClick={() => (window.location.href = '/login')}
+                    className="bg-blue-600 hover:bg-blue-700 text-white"
+                  >
+                    Đăng nhập
+                  </Button>
+                </div>
+              ) : isInitialLoading ? (
+                <div className="flex flex-1 items-center justify-center text-sm text-gray-500">
+                  Đang tải cuộc trò chuyện...
+                </div>
+              ) : (
+                <>
+                  {renderMessages()}
+                  <div className="flex-shrink-0 px-4 py-2 border-t border-gray-200">
+                    <div className="text-xs text-gray-500 mb-2">Câu hỏi gợi ý:</div>
+                    <div className="flex flex-wrap gap-1">
+                      {quickReplies.map((reply) => (
+                        <Button
+                          key={reply}
+                          variant="outline"
+                          size="sm"
+                          className="text-xs h-6 px-2"
+                          onClick={() => handleQuickReply(reply)}
+                        >
+                          {reply}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0 p-4 border-t border-gray-200">
+                    <div className="flex space-x-2">
+                      <Input
+                        value={inputValue}
+                        onChange={(e) => setInputValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            handleSendMessage(inputValue);
+                          }
+                        }}
+                        placeholder="Nhập tin nhắn..."
+                        className="flex-1 text-sm"
+                      />
+                      <Button
+                        className="h-8"
+                        onClick={() => handleSendMessage(inputValue)}
+                      >
+                        <Send className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </>
         )}
       </Card>
     </div>

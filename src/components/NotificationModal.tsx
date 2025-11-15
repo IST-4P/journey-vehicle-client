@@ -11,10 +11,11 @@ import { connectNotificationSocket } from '../utils/ws-client';
 interface Notification {
   id: string; 
   title: string;
+  content?: string;
   message?: string; 
   time?: string; 
   read: boolean;
-  type: 'booking' | 'payment' | 'promotion' | 'system' | 'WELCOME';
+  type: string;
   createdAt: string; 
 }
 
@@ -27,18 +28,21 @@ interface NotificationModalProps {
 export function NotificationModal({ isOpen, onClose, onNotificationChange }: NotificationModalProps) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(false);
-  const [markingAsRead, setMarkingAsRead] = useState<string | null>(null);
   const [markingAllAsRead, setMarkingAllAsRead] = useState(false);
   const [deletingNotification, setDeletingNotification] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [limit] = useState(10);
   const [hasMore, setHasMore] = useState(true);
+  const [selectedNotification, setSelectedNotification] = useState<Notification | null>(null);
+  const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
   const navigate = useNavigate();
 
   // Reset page when modal opens
   useEffect(() => {
     if (isOpen) {
       setPage(1);
+      setSelectedNotification(null);
+      setDetailLoadingId(null);
     }
   }, [isOpen]);
 
@@ -122,8 +126,10 @@ export function NotificationModal({ isOpen, onClose, onNotificationChange }: Not
           read: true
         })));
         toast.success('Đã đánh dấu tất cả thông báo là đã đọc');
-        // Notify parent component to refresh unread count
         onNotificationChange?.();
+        if (selectedNotification) {
+          setSelectedNotification({ ...selectedNotification, read: true });
+        }
       } else {
         toast.error('Không thể cập nhật trạng thái thông báo');
       }
@@ -132,42 +138,6 @@ export function NotificationModal({ isOpen, onClose, onNotificationChange }: Not
       toast.error('Lỗi khi cập nhật thông báo');
     } finally {
       setMarkingAllAsRead(false);
-    }
-  };
-
-  const markAsRead = async (id: string) => {
-    setMarkingAsRead(id);
-    try {
-      const response = await fetch(
-        `${import.meta.env.VITE_API_BASE_URL}/notification`,
-        {
-          method: 'PUT',
-          credentials: 'include',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            notificationIds: [id]
-          }),
-        }
-      );
-
-      if (response.ok) {
-        // Update local state if API call successful
-        setNotifications(notifications.map(notification =>
-          notification.id === id ? { ...notification, read: true } : notification
-        ));
-        toast.success('Đã đánh dấu thông báo là đã đọc');
-        // Notify parent component to refresh unread count
-        onNotificationChange?.();
-      } else {
-        toast.error('Không thể cập nhật trạng thái thông báo');
-      }
-    } catch (error) {
-      console.error('Lỗi khi cập nhật thông báo:', error);
-      toast.error('Lỗi khi cập nhật thông báo');
-    } finally {
-      setMarkingAsRead(null);
     }
   };
 
@@ -191,8 +161,10 @@ export function NotificationModal({ isOpen, onClose, onNotificationChange }: Not
         // Remove from local state if API call successful
         setNotifications(notifications.filter(notification => notification.id !== id));
         toast.success('Đã xóa thông báo');
-        // Notify parent component to refresh unread count
         onNotificationChange?.();
+        if (selectedNotification?.id === id) {
+          setSelectedNotification(null);
+        }
       } else {
         toast.error('Không thể xóa thông báo');
       }
@@ -201,6 +173,77 @@ export function NotificationModal({ isOpen, onClose, onNotificationChange }: Not
       toast.error('Lỗi khi xóa thông báo');
     } finally {
       setDeletingNotification(null);
+    }
+  };
+
+  const viewNotificationDetail = async (id: string) => {
+    if (selectedNotification?.id === id && !detailLoadingId) {
+      setSelectedNotification(null);
+      return;
+    }
+
+    setDetailLoadingId(id);
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_API_BASE_URL}/notification/${id}`,
+        {
+          credentials: 'include',
+        }
+      );
+
+      if (!response.ok) {
+        toast.error('Không thể tải chi tiết thông báo');
+        return;
+      }
+
+      const result = await response.json();
+      const detail = result?.data ?? result;
+      let normalized: Notification = {
+        id: detail.id,
+        title: detail.title,
+        content: detail.content ?? detail.message,
+        read: detail.read,
+        type: detail.type,
+        createdAt: detail.createdAt,
+      };
+
+      setSelectedNotification(normalized);
+
+      if (!detail.read) {
+        try {
+          const markResponse = await fetch(
+            `${import.meta.env.VITE_API_BASE_URL}/notification`,
+            {
+              method: 'PUT',
+              credentials: 'include',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                notificationIds: [id],
+              }),
+            }
+          );
+
+          if (markResponse.ok) {
+            normalized = { ...normalized, read: true };
+            setSelectedNotification(normalized);
+            setNotifications((prev) =>
+              prev.map((notification) =>
+                notification.id === id ? { ...notification, read: true } : notification,
+              ),
+            );
+            onNotificationChange?.();
+          }
+        } catch (error) {
+          console.error('Lỗi khi cập nhật trạng thái thông báo:', error);
+        }
+      }
+    } catch (error) {
+      console.error('Lỗi khi tải chi tiết thông báo:', error);
+      toast.error('Có lỗi khi tải chi tiết thông báo');
+    } finally {
+      setDetailLoadingId(null);
     }
   };
 
@@ -297,11 +340,20 @@ export function NotificationModal({ isOpen, onClose, onNotificationChange }: Not
                 {notifications.map((notification, index) => (
                   <div
                     key={notification.id}
-                    className={`relative p-4 rounded-lg border transition-all hover:shadow-sm ${
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => viewNotificationDetail(notification.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        viewNotificationDetail(notification.id);
+                      }
+                    }}
+                    className={`relative p-4 rounded-lg border transition-all cursor-pointer hover:shadow-sm ${
                       notification.read 
                         ? 'bg-gray-50 border-gray-100' 
                         : `${getNotificationColor(notification.type)} shadow-sm`
-                    }`}
+                    } ${selectedNotification?.id === notification.id ? 'ring-2 ring-blue-200' : ''}`}
                   >
                     {/* Debug info for each notification */}
                     {import.meta.env.DEV && (
@@ -327,7 +379,10 @@ export function NotificationModal({ isOpen, onClose, onNotificationChange }: Not
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => deleteNotification(notification.id)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteNotification(notification.id);
+                            }}
                             disabled={deletingNotification === notification.id}
                             className="h-6 w-6 p-0 hover:bg-red-100 hover:text-red-600 ml-2 flex-shrink-0"
                             title="Xóa thông báo"
@@ -344,35 +399,45 @@ export function NotificationModal({ isOpen, onClose, onNotificationChange }: Not
                           {notification.title }
                         </p>
                         
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center text-xs text-gray-400">
+                        <div className="flex items-center justify-between text-xs text-gray-400">
+                          <div className="flex items-center">
                             <Clock className="h-3 w-3 mr-1" />
                             {formatTime(notification.createdAt)}
                           </div>
-                          
-                          {!notification.read && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => markAsRead(notification.id)}
-                              disabled={markingAsRead === notification.id}
-                              className="h-6 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50 px-2"
-                            >
-                              {markingAsRead === notification.id && (
-                                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                              )}
-                              {markingAsRead === notification.id ? 'Đang cập nhật...' : 'Đánh dấu đã đọc'}
-                            </Button>
+                          {notification.read ? (
+                            <span className="text-green-600 font-medium">Đã đọc</span>
+                          ) : (
+                            <span className="text-blue-600 font-medium">Chưa đọc</span>
                           )}
                         </div>
-                      </div>
                     </div>
                   </div>
-                ))}
-              </div>
+                  
+                  {selectedNotification?.id === notification.id && (
+                    <div className="mt-3 rounded-lg border border-dashed border-blue-100 bg-white/80 p-3">
+                      {detailLoadingId === notification.id ? (
+                        <div className="flex items-center text-sm text-gray-500">
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Đang tải chi tiết...
+                        </div>
+                      ) : (
+                        <>
+                          <h3 className="text-sm font-semibold text-gray-900 mb-1">
+                            {selectedNotification.title}
+                          </h3>
+                          <p className="text-sm text-gray-600 whitespace-pre-wrap">
+                            {selectedNotification.content || 'Không có nội dung chi tiết.'}
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
             )}
-          </div>
-        </ScrollArea>
+        </div>
+      </ScrollArea>
 
         <div className="p-6 pt-4 border-t bg-gray-50">
           {/* Pagination Controls */}

@@ -79,6 +79,7 @@ export function UserProfile({ user }: UserProfileProps) {
   const sidebarItems = [
     { id: 'account', label: 'Tài khoản của tôi', icon: User, path: '/profile/account' },
     { id: 'history', label: 'Lịch sử thuê', icon: History, path: '/profile/history' },
+    { id: 'addresses', label: 'Địa chỉ của tôi', icon: MapPin, path: '/profile/addresses' },
     { id: 'payment', label: 'Ví', icon: CreditCard, path: '/profile/payment' },
     { id: 'complaints', label: 'Lịch sử khiếu nại', icon: MessageSquare, path: '/profile/complaints' },
     { id: 'password', label: 'Đổi mật khẩu', icon: Lock, path: '/profile/password' },
@@ -130,6 +131,7 @@ export function UserProfile({ user }: UserProfileProps) {
           <Routes>
             <Route path="/account" element={<AccountTab user={currentUser} driver={driverLicense} />} />
             <Route path="/history" element={<HistoryTab />} />
+            <Route path="/addresses" element={<AddressesTab />} />
             <Route path="/payment" element={<PaymentTab />} />
             <Route path="/complaints" element={<ComplaintsTab />} />
             <Route path="/password" element={<PasswordTab />} />
@@ -816,7 +818,6 @@ interface BookingSummary {
   id: string;
   code?: string;
   vehicleName?: string;
-  vehicleId?: string;
   vehicleImage?: string;
   status?: string;
   startTime?: string;
@@ -871,9 +872,6 @@ interface ExtensionRecord {
   id: string;
   bookingId: string;
   newEndTime?: string;
-  originalEndTime?: string;
-  additionalHours?: number;
-  additionalAmount?: number;
   status?: string;
   notes?: string;
   createdAt?: string;
@@ -882,63 +880,44 @@ interface ExtensionRecord {
 
 const BOOKING_STATUS_FILTERS = [
   { label: 'Tất cả', value: 'ALL' },
-  { label: 'Chờ xử lý', value: 'PENDING_PROCESS' },
-  { label: 'Đang thuê', value: 'ONGOING' },
+  { label: 'Chờ thanh toán', value: 'PENDING' },
+  { label: 'Đã xác nhận', value: 'CONFIRMED' },
+  { label: 'Đang thuê', value: 'IN_PROGRESS' },
+  { label: 'Đã nhận xe', value: 'CHECKED_IN' },
   { label: 'Hoàn tất', value: 'COMPLETED' },
-  { label: 'Đã hủy', value: 'CANCELLED_GROUP' }
+  { label: 'Đã hủy', value: 'CANCELLED' }
 ] as const;
 
 const BOOKING_STATUS_STYLES: Record<string, { label: string; className: string }> = {
-  // Trạng thái thanh toán
-  PENDING: { label: 'Chờ thanh toán', className: 'bg-amber-100 text-amber-700' },
-  DEPOSIT_PAID: { label: 'Đã cọc - Chờ ngày nhận xe', className: 'bg-yellow-100 text-yellow-700' },
-  READY_FOR_CHECKIN: { label: 'Chờ thanh toán còn lại', className: 'bg-orange-100 text-orange-700' },
-  FULLY_PAID: { label: 'Đã thanh toán đủ - Chờ nhận xe', className: 'bg-lime-100 text-lime-700' },
+  PENDING: { label: 'Chờ duyệt', className: 'bg-amber-100 text-amber-700' },
   CONFIRMED: { label: 'Đã xác nhận', className: 'bg-blue-100 text-blue-700' },
-
-  // Trạng thái thuê xe
-  ONGOING: { label: 'Đang thuê xe', className: 'bg-green-100 text-green-700' },
-  IN_PROGRESS: { label: 'Đang thuê xe', className: 'bg-green-100 text-green-700' },
-  IN_USE: { label: 'Đang thuê xe', className: 'bg-green-100 text-green-700' },
-
-  // Trạng thái check-in/out
+  IN_PROGRESS: { label: 'Đang thuê', className: 'bg-green-100 text-green-700' },
+  IN_USE: { label: 'Đang thuê', className: 'bg-green-100 text-green-700' },
   CHECKED_IN: { label: 'Đã nhận xe', className: 'bg-indigo-100 text-indigo-700' },
   CHECKED_OUT: { label: 'Đã trả xe', className: 'bg-purple-100 text-purple-700' },
-  CHECK_IN: { label: 'Đang check-in', className: 'bg-sky-100 text-sky-700' },
-  CHECK_OUT: { label: 'Đang check-out', className: 'bg-slate-100 text-slate-700' },
-
-  // Trạng thái kết thúc
+  CHECK_IN: { label: 'Check-in', className: 'bg-sky-100 text-sky-700' },
+  CHECK_OUT: { label: 'Check-out', className: 'bg-slate-100 text-slate-700' },
   COMPLETED: { label: 'Hoàn tất', className: 'bg-emerald-100 text-emerald-700' },
   CANCELLED: { label: 'Đã hủy', className: 'bg-rose-100 text-rose-700' },
-  REJECTED: { label: 'Bị từ chối', className: 'bg-rose-100 text-rose-700' },
-  EXPIRED: { label: 'Hết hạn thanh toán', className: 'bg-gray-100 text-gray-700' },
-  OVERDUE: { label: 'Quá hạn trả xe', className: 'bg-red-100 text-red-700' },
-
-  // Trạng thái gia hạn
-  EXTENSION_REQUESTED: { label: 'Yêu cầu gia hạn', className: 'bg-amber-100 text-amber-700' },
-  EXTENSION_APPROVED: { label: 'Đã duyệt gia hạn', className: 'bg-emerald-100 text-emerald-700' },
-  EXTENSION_REJECTED: { label: 'Từ chối gia hạn', className: 'bg-rose-100 text-rose-700' }
+  REJECTED: { label: 'Từ chối', className: 'bg-rose-100 text-rose-700' },
+  EXTENSION_REQUESTED: { label: 'Gia hạn chờ duyệt', className: 'bg-amber-100 text-amber-700' },
+  EXTENSION_APPROVED: { label: 'Gia hạn duyệt', className: 'bg-emerald-100 text-emerald-700' },
+  EXTENSION_REJECTED: { label: 'Gia hạn từ chối', className: 'bg-rose-100 text-rose-700' }
 };
 
 const HISTORY_ACTION_COPY: Record<string, string> = {
   CREATED: 'Tạo booking',
-  PENDING: 'Chờ thanh toán',
-  DEPOSIT_PAID: 'Đã thanh toán cọc, chờ đến ngày nhận xe',
-  READY_FOR_CHECKIN: 'Đến ngày nhận xe, chờ thanh toán phần còn lại',
-  FULLY_PAID: 'Đã thanh toán đủ, chờ check-in',
+  DEPOSIT_PAID: 'Đã thanh toán cọc',
   CONFIRMED: 'Chủ xe xác nhận',
-  ONGOING: 'Đang thuê xe (đã check-in)',
   CHECK_IN: 'Khách check-in',
   CHECK_OUT: 'Khách check-out',
-  CHECKED_IN: 'Đã nhận xe',
-  CHECKED_OUT: 'Đã trả xe',
+  CHECKED_IN: 'Khách check-in',
+  CHECKED_OUT: 'Khách check-out',
   EXTENSION_REQUESTED: 'Yêu cầu gia hạn',
   EXTENSION_APPROVED: 'Gia hạn được duyệt',
   EXTENSION_REJECTED: 'Gia hạn bị từ chối',
-  COMPLETED: 'Hoàn tất chuyến (đã check-out)',
   CANCELLED: 'Booking bị hủy',
-  EXPIRED: 'Hết hạn (quá thời gian không thanh toán)',
-  OVERDUE: 'Quá hạn (quá thời gian trả xe)'
+  COMPLETED: 'Hoàn tất chuyến'
 };
 
 const BOOKING_LIST_LIMIT = 10;
@@ -947,20 +926,11 @@ interface CheckCompletion {
   checkIn?: CheckRecord;
   checkOut?: CheckRecord;
 }
-interface PaymentInfo {
-  id?: string;
-  bookingId: string;
-  paymentCode: string;
-  amount: number;
-  status?: string;
-  createdAt?: string;
-}
 const QR_BASE_URL = 'https://qr.sepay.vn/img';
 const PAYMENT_ACCOUNT_NUMBER = import.meta.env.VITE_PAYMENT_ACCOUNT || '0344927528';
 const PAYMENT_BANK_CODE = import.meta.env.VITE_PAYMENT_BANK_CODE || 'MB';
 const PAYMENT_ACCOUNT_NAME = import.meta.env.VITE_PAYMENT_ACCOUNT_NAME || 'HacMieu Journey';
 const PENDING_PAYMENT_STATUSES = ['PENDING', 'PENDING_PAYMENT', 'WAITING_PAYMENT', 'AWAITING_PAYMENT'];
-const PAYMENT_GRACE_PERIOD_MS = 15 * 60 * 1000;
 
 const sanitizePaymentDescription = (value: string) => {
   if (!value) return 'VEHICLEPAYMENT';
@@ -982,54 +952,13 @@ function HistoryTab() {
         booking.vehicleName?.toLowerCase().includes(keyword) ||
         booking.code?.toLowerCase().includes(keyword);
       const normalizedStatus = booking.status?.toUpperCase() || '';
-
-      // Tab 1: Tất cả - show all bookings
-      if (statusFilter === 'ALL') {
-        return matchesKeyword;
-      }
-
-      // Tab 2: Chờ xử lý - chỉ PENDING (chờ thanh toán khi ấn booking)
-      if (statusFilter === 'PENDING_PROCESS') {
-        const isPendingProcess = normalizedStatus === 'PENDING';
-        return matchesKeyword && isPendingProcess;
-      }
-
-      // Tab 3: Đang thuê - ONGOING (with check-in)
-      if (statusFilter === 'ONGOING') {
-        const isOngoing = normalizedStatus === 'ONGOING';
-        return matchesKeyword && isOngoing;
-      }
-
-      // Tab 4: Hoàn tất - COMPLETED
-      if (statusFilter === 'COMPLETED') {
-        const isCompleted = normalizedStatus === 'COMPLETED';
-        return matchesKeyword && isCompleted;
-      }
-
-      // Tab 5: Đã hủy - CANCELLED, EXPIRED, OVERDUE
-      if (statusFilter === 'CANCELLED_GROUP') {
-        const isCancelled = ['CANCELLED', 'EXPIRED', 'OVERDUE'].includes(normalizedStatus);
-        return matchesKeyword && isCancelled;
-      }
-
-      return matchesKeyword;
+      const matchesStatus =
+        statusFilter === 'ALL' ||
+        normalizedStatus === statusFilter ||
+        (statusFilter === 'IN_PROGRESS' && ['IN_PROGRESS', 'IN_USE'].includes(normalizedStatus));
+      return matchesKeyword && matchesStatus;
     });
   }, [bookings, searchTerm, statusFilter]);
-
-  // Tính lại totalPages dựa trên filteredBookings khi có filter
-  const adjustedTotalPages = useMemo(() => {
-    // Nếu đang filter (không phải "Tất cả"), tính lại số trang dựa trên filteredBookings
-    if (statusFilter !== 'ALL' || searchTerm.trim()) {
-      return Math.max(1, Math.ceil(filteredBookings.length / BOOKING_LIST_LIMIT));
-    }
-    // Nếu không filter, dùng totalPages từ API
-    return totalPages;
-  }, [filteredBookings.length, statusFilter, searchTerm, totalPages]);
-
-  // Reset về trang 1 khi thay đổi filter hoặc search
-  useEffect(() => {
-    setPage(1);
-  }, [statusFilter, searchTerm]);
 
   useEffect(() => {
     if (!filteredBookings.length) {
@@ -1095,18 +1024,18 @@ function HistoryTab() {
         </CardContent>
       </Card>
 
-      <BookingListPanel
-        bookings={filteredBookings}
-        loading={loading}
-        page={page}
-        totalPages={adjustedTotalPages}
-        onPageChange={setPage}
-        selectedId={selectedBookingId}
-        onSelect={(id) => setSelectedBookingId(id)}
-        renderDetail={(bookingId) => (
-          <BookingDetailWorkspace bookingId={bookingId} onBookingUpdated={refetch} inline />
-        )}
-      />
+      <div className={isDesktop ? 'grid grid-cols-[32%_1fr] gap-5' : 'space-y-5'}>
+        <BookingListPanel
+          bookings={filteredBookings}
+          loading={loading}
+          page={page}
+          totalPages={totalPages}
+          onPageChange={setPage}
+          selectedId={selectedBookingId}
+          onSelect={(id) => setSelectedBookingId(id)}
+        />
+        <BookingDetailWorkspace bookingId={selectedBookingId} onBookingUpdated={refetch} />
+      </div>
     </div>
   );
 }
@@ -1117,8 +1046,7 @@ function BookingListPanel({
   totalPages,
   onPageChange,
   selectedId,
-  onSelect,
-  renderDetail
+  onSelect
 }: {
   bookings: BookingSummary[];
   loading: boolean;
@@ -1126,19 +1054,8 @@ function BookingListPanel({
   totalPages: number;
   onPageChange: (page: number) => void;
   selectedId: string | null;
-  onSelect: (id: string | null) => void;
-  renderDetail?: (bookingId: string) => React.ReactNode;
+  onSelect: (id: string) => void;
 }) {
-  const handleToggle = (bookingId: string) => {
-    if (!selectedId) {
-      onSelect(bookingId);
-    } else if (selectedId === bookingId) {
-      onSelect(null);
-    } else {
-      onSelect(bookingId);
-    }
-  };
-
   return (
     <Card className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b px-4 py-3">
@@ -1150,7 +1067,7 @@ function BookingListPanel({
         </div>
         <Badge variant="secondary">{bookings.length}</Badge>
       </div>
-      <div className="flex-1 overflow-y-auto max-h-[32rem] pr-1">
+      <div className="flex-1 divide-y overflow-y-auto">
         {loading ? (
           <div className="flex items-center justify-center py-10 text-sm text-gray-500">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1161,17 +1078,14 @@ function BookingListPanel({
             Không tìm thấy booking phù hợp.
           </div>
         ) : (
-          bookings.map((booking) => {
-            const isActive = booking.id === selectedId;
-            return (
-              <div key={booking.id} className="space-y-2 border-b last:border-b-0">
-                <BookingCard booking={booking} active={isActive} onToggle={() => handleToggle(booking.id)} />
-                {renderDetail && isActive && (
-                  <div className="bg-gray-50 px-4 pb-4">{renderDetail(booking.id)}</div>
-                )}
-              </div>
-            );
-          })
+          bookings.map((booking) => (
+            <BookingCard
+              key={booking.id}
+              booking={booking}
+              active={booking.id === selectedId}
+              onSelect={onSelect}
+            />
+          ))
         )}
       </div>
       <div className="border-t px-4 py-3">
@@ -1184,36 +1098,23 @@ function BookingListPanel({
 function BookingCard({
   booking,
   active,
-  onToggle
+  onSelect
 }: {
   booking: BookingSummary;
   active: boolean;
-  onToggle: () => void;
+  onSelect: (id: string) => void;
 }) {
   return (
     <button
       type="button"
-      onClick={onToggle}
+      onClick={() => onSelect(booking.id)}
       className={`flex w-full flex-col gap-2 px-4 py-3 text-left transition ${
         active ? 'bg-blue-50' : 'hover:bg-gray-50'
       }`}
     >
       <div className="flex items-center justify-between gap-2">
         <div>
-          <p className="text-sm font-semibold text-gray-900">
-            {booking.vehicleId ? (
-              <Link
-                to={{
-                  pathname: `/vehicle/${booking.vehicleId}`
-                }}
-                className="text-blue-600 hover:underline"
-              >
-                {booking.vehicleName || 'Xe chưa rõ'}
-              </Link>
-            ) : (
-              booking.vehicleName || 'Xe chưa rõ'
-            )}
-          </p>
+          <p className="text-sm font-semibold text-gray-900">{booking.vehicleName || 'Xe chưa rõ'}</p>
           <p className="text-xs text-gray-500">{booking.code || booking.id}</p>
         </div>
         <StatusBadge status={booking.status} />
@@ -1234,12 +1135,10 @@ function BookingCard({
 }
 function BookingDetailWorkspace({
   bookingId,
-  onBookingUpdated,
-  inline = false
+  onBookingUpdated
 }: {
   bookingId: string | null;
   onBookingUpdated?: () => void;
-  inline?: boolean;
 }) {
   const { booking, loading, error, refetch } = useBookingDetail(bookingId);
   const [activeTab, setActiveTab] = useState<TabKey>('info');
@@ -1320,23 +1219,13 @@ function BookingDetailWorkspace({
     }
   ];
 
-  const isExpired = (booking.status || '').toUpperCase() === 'EXPIRED';
-
-  const detailCard = (
+  return (
     <Card className="p-0">
       <div className="border-b p-4">
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-xs uppercase text-gray-500">Mã booking {booking.code || booking.id}</p>
-            <h3 className="text-lg font-semibold text-gray-900">
-              {booking.vehicleId ? (
-                <Link to={`/vehicle/${booking.vehicleId}`} className="text-blue-600 hover:underline">
-                  {booking.vehicleName}
-                </Link>
-              ) : (
-                booking.vehicleName
-              )}
-            </h3>
+            <h3 className="text-lg font-semibold text-gray-900">{booking.vehicleName}</h3>
             <p className="text-sm text-gray-500">{formatDateRange(booking.startTime, booking.endTime)}</p>
           </div>
           <div className="flex flex-col items-start gap-2 md:items-end">
@@ -1345,50 +1234,42 @@ function BookingDetailWorkspace({
           </div>
         </div>
       </div>
-      {!isExpired && (
-        <div className="p-4">
-          {isDesktop ? (
-            <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TabKey)}>
-              <TabsList className="grid grid-cols-4">
-                {tabs.map((tab) => (
-                  <TabsTrigger key={tab.id} value={tab.id}>
-                    {tab.label}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
+      <div className="p-4">
+        {isDesktop ? (
+          <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TabKey)}>
+            <TabsList className="grid grid-cols-4">
               {tabs.map((tab) => (
-                <TabsContent key={tab.id} value={tab.id} className="pt-4">
+                <TabsTrigger key={tab.id} value={tab.id}>
+                  {tab.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+            {tabs.map((tab) => (
+              <TabsContent key={tab.id} value={tab.id} className="pt-4">
+                {tab.content(activeTab === tab.id)}
+              </TabsContent>
+            ))}
+          </Tabs>
+        ) : (
+          <Accordion
+            type="single"
+            collapsible
+            value={activeTab}
+            onValueChange={(value) => value && setActiveTab(value as TabKey)}
+          >
+            {tabs.map((tab) => (
+              <AccordionItem key={tab.id} value={tab.id}>
+                <AccordionTrigger>{tab.label}</AccordionTrigger>
+                <AccordionContent className="pt-2">
                   {tab.content(activeTab === tab.id)}
-                </TabsContent>
-              ))}
-            </Tabs>
-          ) : (
-            <Accordion
-              type="single"
-              collapsible
-              value={activeTab}
-              onValueChange={(value) => value && setActiveTab(value as TabKey)}
-            >
-              {tabs.map((tab) => (
-                <AccordionItem key={tab.id} value={tab.id}>
-                  <AccordionTrigger>{tab.label}</AccordionTrigger>
-                  <AccordionContent className="pt-2">
-                    {tab.content(activeTab === tab.id)}
-                  </AccordionContent>
-                </AccordionItem>
-              ))}
-            </Accordion>
-          )}
-        </div>
-      )}
+                </AccordionContent>
+              </AccordionItem>
+            ))}
+          </Accordion>
+        )}
+      </div>
     </Card>
   );
-
-  if (inline) {
-    return <div className="pt-2">{detailCard}</div>;
-  }
-
-  return detailCard;
 }
 function BookingInfoSection({
   booking,
@@ -1409,57 +1290,6 @@ function BookingInfoSection({
   const shouldShowPaymentNotice =
     paymentAmount > 0 &&
     (PENDING_PAYMENT_STATUSES.includes(status) || PENDING_PAYMENT_STATUSES.includes(paymentStatus));
-  const [paymentInfo, setPaymentInfo] = useState<PaymentInfo | null>(null);
-  const [paymentLoading, setPaymentLoading] = useState(false);
-  const [paymentError, setPaymentError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!shouldShowPaymentNotice) {
-      setPaymentInfo(null);
-      setPaymentError(null);
-      return;
-    }
-    if (!apiBase || !booking.id) {
-      setPaymentError('Không thể tải thông tin thanh toán');
-      return;
-    }
-    const controller = new AbortController();
-    const fetchPayment = async () => {
-      setPaymentLoading(true);
-      setPaymentError(null);
-      try {
-        const response = await fetch(`${apiBase}/payment/${booking.id}`, {
-          credentials: 'include',
-          signal: controller.signal
-        });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-        const json = await response.json();
-        const payload = json.data ?? json;
-        const amountValue = Number(payload.amount ?? payload.totalAmount ?? paymentAmount) || paymentAmount;
-        setPaymentInfo({
-          id: payload.id,
-          bookingId: payload.bookingId || booking.id,
-          paymentCode: (payload.paymentCode || sanitizePaymentDescription(booking.id)).toString(),
-          amount: amountValue,
-          status: payload.status || payload.paymentStatus || 'PENDING',
-          createdAt: payload.createdAt || payload.created_at
-        });
-      } catch (error) {
-        if (controller.signal.aborted) return;
-        console.error('Load payment info error:', error);
-        setPaymentInfo(null);
-        setPaymentError(error instanceof Error ? error.message : 'Không thể tải thông tin thanh toán');
-      } finally {
-        if (!controller.signal.aborted) {
-          setPaymentLoading(false);
-        }
-      }
-    };
-    fetchPayment();
-    return () => controller.abort();
-  }, [apiBase, booking.id, paymentAmount, shouldShowPaymentNotice]);
 
   const handleCancel = async () => {
     if (!booking.id) return;
@@ -1532,13 +1362,7 @@ function BookingInfoSection({
   return (
     <div className="space-y-6">
       {shouldShowPaymentNotice && (
-        <PendingPaymentNotice
-          booking={booking}
-          fallbackAmount={paymentAmount}
-          payment={paymentInfo}
-          loading={paymentLoading}
-          error={paymentError}
-        />
+        <PendingPaymentNotice booking={booking} amount={paymentAmount} />
       )}
       <div className="rounded-xl border p-4">
         <div className="grid gap-4 md:grid-cols-2">
@@ -2259,8 +2083,6 @@ function ExtensionHistoryList({
   loading: boolean;
   error?: string | null;
 }) {
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-
   return (
     <div className="space-y-3 rounded-xl border p-4">
       <div className="flex items-center justify-between">
@@ -2274,206 +2096,19 @@ function ExtensionHistoryList({
       )}
       <div className="space-y-3">
         {records.map((record) => (
-          <ExtensionHistoryItem
-            key={record.id}
-            record={record}
-            expanded={expandedId === record.id}
-            onToggle={() => setExpandedId((prev) => (prev === record.id ? null : record.id))}
-          />
+          <div key={record.id} className="rounded-lg border border-gray-100 p-3">
+            <div className="flex items-center justify-between text-xs text-gray-500">
+              <span>{formatDateTime(record.createdAt)}</span>
+              <StatusBadge status={record.status} />
+            </div>
+            <p className="mt-1 text-sm font-semibold text-gray-900">
+              Kết thúc mới: {formatDateTime(record.newEndTime)}
+            </p>
+            {record.notes && <p className="text-sm text-gray-600">Ghi chú: {record.notes}</p>}
+            {record.approvedBy && <p className="text-xs text-gray-500">Xử lý bởi {record.approvedBy}</p>}
+          </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-function ExtensionHistoryItem({
-  record,
-  expanded,
-  onToggle
-}: {
-  record: ExtensionRecord;
-  expanded: boolean;
-  onToggle: () => void;
-}) {
-  const showPayment = record.status === 'APPROVED';
-  return (
-    <div
-      className={`rounded-lg border border-gray-100 transition hover:shadow-sm ${
-        expanded ? 'bg-gray-50' : 'bg-white'
-      }`}
-    >
-      <button type="button" className="w-full text-left p-3" onClick={onToggle}>
-        <div className="flex items-center justify-between text-xs text-gray-500">
-          <span>{formatDateTime(record.createdAt)}</span>
-          <StatusBadge status={record.status} />
-        </div>
-        <p className="mt-1 text-sm font-semibold text-gray-900">
-          Kết thúc mới: {formatDateTime(record.newEndTime)}
-        </p>
-        {record.notes && <p className="text-sm text-gray-600 line-clamp-2">Ghi chú: {record.notes}</p>}
-      </button>
-      {expanded && (
-        <div className="border-t border-dashed border-gray-200 px-3 py-3 text-sm text-gray-600 space-y-2">
-          <div className="grid gap-2 sm:grid-cols-2">
-            {record.originalEndTime && (
-              <InfoRow label="Kết thúc ban đầu" value={formatDateTime(record.originalEndTime)} />
-            )}
-            {record.additionalHours && (
-              <InfoRow label="Giờ bổ sung" value={`${record.additionalHours} giờ`} />
-            )}
-            {typeof record.additionalAmount === 'number' && record.additionalAmount > 0 && (
-              <InfoRow label="Chi phí gia hạn" value={formatCurrency(record.additionalAmount)} />
-            )}
-            {record.approvedBy && <InfoRow label="Xử lý bởi" value={record.approvedBy} />}
-          </div>
-          {record.notes && (
-            <p className="rounded-md bg-white/80 p-2 text-sm text-gray-700">Ghi chú: {record.notes}</p>
-          )}
-          {showPayment ? (
-            <ExtensionPaymentNotice extension={record} />
-          ) : (
-            <p className="text-xs text-gray-500">
-              Gia hạn đang ở trạng thái <span className="font-medium">{record.status || '—'}</span>. Thông tin
-              thanh toán sẽ xuất hiện sau khi yêu cầu được phê duyệt.
-            </p>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ExtensionPaymentNotice({ extension }: { extension: ExtensionRecord }) {
-  const apiBase = import.meta.env.VITE_API_BASE_URL;
-  const [payment, setPayment] = useState<PaymentInfo | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!extension?.id || !apiBase) return;
-    const controller = new AbortController();
-    const fetchPayment = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const response = await fetch(`${apiBase}/payment/${extension.id}`, {
-          credentials: 'include',
-          signal: controller.signal
-        });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-        const json = await response.json();
-        const payload = json.data ?? json;
-        const amountValue =
-          Number(payload.amount ?? payload.totalAmount ?? extension.additionalAmount ?? 0) ||
-          extension.additionalAmount ||
-          0;
-        setPayment({
-          id: payload.id,
-          bookingId: payload.bookingId || extension.bookingId,
-          paymentCode: (payload.paymentCode || sanitizePaymentDescription(`EXT${extension.id}`)).toString(),
-          amount: amountValue,
-          status: payload.status || payload.paymentStatus || 'PENDING',
-          createdAt: payload.createdAt || payload.created_at
-        });
-      } catch (err) {
-        if (controller.signal.aborted) return;
-        console.error('Load extension payment error:', err);
-        setPayment(null);
-        setError(err instanceof Error ? err.message : 'Không thể tải thông tin thanh toán');
-      } finally {
-        if (!controller.signal.aborted) {
-          setLoading(false);
-        }
-      }
-    };
-    fetchPayment();
-    return () => controller.abort();
-  }, [apiBase, extension.additionalAmount, extension.bookingId, extension.id]);
-
-  const amount = payment?.amount ?? extension.additionalAmount ?? 0;
-  const paymentCode = payment?.paymentCode ?? sanitizePaymentDescription(`EXT${extension.id}`);
-  const qrUrl = amount ? buildPaymentQrUrl(amount, paymentCode) : '';
-
-  const copyText = async (value: string, label: string) => {
-    if (!value) return;
-    try {
-      if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(value);
-      } else {
-        const textarea = document.createElement('textarea');
-        textarea.value = value;
-        textarea.style.position = 'fixed';
-        textarea.style.opacity = '0';
-        document.body.appendChild(textarea);
-        textarea.focus();
-        textarea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textarea);
-      }
-      toast.success(`Đã sao chép ${label}`);
-    } catch (err) {
-      console.error('Copy clipboard failed', err);
-      toast.error('Không thể sao chép. Vui lòng thử lại.');
-    }
-  };
-
-  if (!amount) {
-    return <p className="text-xs text-gray-500">Không tìm thấy chi phí gia hạn.</p>;
-  }
-
-  return (
-    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-3 text-sm text-amber-900">
-      <div className="flex items-start gap-2">
-        <QrCode className="h-4 w-4 mt-0.5" />
-        <div>
-          <p className="font-semibold text-amber-900">Thanh toán gia hạn</p>
-          <p className="text-xs text-amber-700">
-            Số tiền cần thanh toán thêm: <span className="font-semibold">{formatCurrency(amount)}</span>
-          </p>
-          {payment?.status && <p className="text-xs text-amber-700">Trạng thái: {payment.status}</p>}
-          {loading && <p className="text-xs text-amber-700">Đang tải thông tin thanh toán...</p>}
-          {error && <p className="text-xs text-red-600">{error}</p>}
-          <p className="text-xs text-amber-700 mt-1">
-            Bạn có thể thanh toán bất cứ lúc nào để áp dụng thời gian mới cho booking.
-          </p>
-        </div>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        <div className="rounded-lg border border-amber-200 bg-white p-2">
-          <p className="text-[11px] uppercase text-gray-500">Nội dung chuyển khoản</p>
-          <p className="font-semibold text-gray-900">{paymentCode}</p>
-          <Button
-            type="button"
-            onClick={() => copyText(paymentCode, 'nội dung chuyển khoản')}
-            variant="ghost"
-            size="sm"
-            className="mt-1 h-7 px-2 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-          >
-            Sao chép
-          </Button>
-        </div>
-        <div className="rounded-lg border border-amber-200 bg-white p-2">
-          <p className="text-[11px] uppercase text-gray-500">Số tiền</p>
-          <p className="font-semibold text-gray-900">{formatCurrency(amount)}</p>
-          <Button
-            type="button"
-            onClick={() => copyText(amount.toString(), 'số tiền')}
-            variant="ghost"
-            size="sm"
-            className="mt-1 h-7 px-2 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-          >
-            Sao chép
-          </Button>
-        </div>
-      </div>
-      {qrUrl && (
-        <div className="rounded-lg border border-amber-200 bg-white p-2 text-center">
-          <p className="text-xs text-gray-500 mb-1">Quét QR để thanh toán</p>
-          <img src={qrUrl} alt="QR thanh toán gia hạn" className="mx-auto h-32 w-32 rounded-md border" />
-        </div>
-      )}
     </div>
   );
 }
@@ -2524,47 +2159,9 @@ function InfoRow({ label, value }: { label: string; value?: React.ReactNode }) {
   );
 }
 
-function PendingPaymentNotice({
-  booking,
-  fallbackAmount,
-  payment,
-  loading,
-  error
-}: {
-  booking: BookingDetailData;
-  fallbackAmount: number;
-  payment: PaymentInfo | null;
-  loading: boolean;
-  error: string | null;
-}) {
-  const amount = payment?.amount ?? fallbackAmount;
-  const description =
-    payment?.paymentCode ?? sanitizePaymentDescription(booking.code || booking.id || 'VEHICLEPAYMENT');
+function PendingPaymentNotice({ booking, amount }: { booking: BookingDetailData; amount: number }) {
+  const description = sanitizePaymentDescription(booking.code || booking.id || 'VEHICLEPAYMENT');
   const qrUrl = buildPaymentQrUrl(amount, description);
-  const [countdown, setCountdown] = useState<string | null>(null);
-  const [expired, setExpired] = useState(false);
-
-  useEffect(() => {
-    if (!payment?.createdAt) {
-      setCountdown(null);
-      setExpired(false);
-      return;
-    }
-    const deadline = new Date(payment.createdAt).getTime() + PAYMENT_GRACE_PERIOD_MS;
-    const tick = () => {
-      const diff = deadline - Date.now();
-      if (diff <= 0) {
-        setCountdown('00:00');
-        setExpired(true);
-      } else {
-        setCountdown(formatCountdownClock(diff));
-        setExpired(false);
-      }
-    };
-    tick();
-    const interval = window.setInterval(tick, 1000);
-    return () => window.clearInterval(interval);
-  }, [payment?.createdAt]);
 
   const copyText = async (value: string, label: string) => {
     if (!value) return;
@@ -2589,46 +2186,15 @@ function PendingPaymentNotice({
     }
   };
 
-  // Nếu giao dịch đã hết hạn, chỉ hiển thị thông báo đơn giản
-  if (expired) {
-    return (
-      <div className="rounded-xl border border-red-200 bg-red-50 p-4">
-        <div className="flex items-start gap-3 text-red-800">
-          <QrCode className="h-5 w-5 mt-0.5" />
-          <div>
-            <p className="font-semibold">Hết hạn thanh toán</p>
-            <p className="text-sm">
-              Booking đã hết hạn do quá thời gian không thanh toán. Vui lòng tạo booking mới nếu bạn vẫn muốn thuê xe.
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-4">
       <div className="flex items-start gap-3 text-amber-800">
         <QrCode className="h-5 w-5 mt-0.5" />
         <div>
-          <p className="font-semibold">Chờ thanh toán để giữ chỗ</p>
+          <p className="font-semibold">Đang chờ thanh toán</p>
           <p className="text-sm">
-            Vui lòng quét mã QR hoặc chuyển khoản theo thông tin bên dưới để hoàn tất đặt cọc và giữ chỗ xe. Hệ thống sẽ tự động xác nhận trong vài phút sau khi nhận được thanh toán.
+            Quét QR hoặc chuyển khoản theo thông tin bên dưới để hoàn tất giữ chỗ. Giao dịch có thể mất vài phút để xác nhận.
           </p>
-          {payment?.status && (
-            <p className="text-xs text-amber-700 mt-1">Trạng thái: {payment.status}</p>
-          )}
-          {loading && (
-            <p className="text-xs text-amber-700">Đang tải thông tin thanh toán...</p>
-          )}
-          {error && (
-            <p className="text-xs text-red-600">Không thể tải thông tin thanh toán tự động. Vui lòng dùng thông tin tổng quát bên dưới.</p>
-          )}
-          {countdown && (
-            <p className="text-xs mt-1 text-amber-700">
-              Thời gian còn lại: {countdown}
-            </p>
-          )}
         </div>
       </div>
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px] lg:items-start">
@@ -3144,13 +2710,6 @@ function formatCurrency(value?: number) {
   return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value);
 }
 
-function formatCountdownClock(ms: number) {
-  const clamped = Math.max(ms, 0);
-  const minutes = Math.floor(clamped / 60000);
-  const seconds = Math.floor((clamped % 60000) / 1000);
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-}
-
 function formatDateTime(value?: string) {
   if (!value) return 'Chưa cập nhật';
   try {
@@ -3208,7 +2767,6 @@ function mapBookingSummary(entry: any): BookingSummary {
     id: rawId ? String(rawId) : String(fallbackId),
     code: entry.code ?? entry.bookingCode ?? entry.reference ?? entry.booking_code,
     vehicleName: entry.vehicleName ?? entry.vehicle?.name ?? entry.vehicle_name,
-     vehicleId: entry.vehicleId ?? entry.vehicle?.id ?? entry.vehicle_id,
     vehicleImage: entry.vehicleImage ?? entry.vehicle?.thumbnail ?? entry.vehicle?.images?.[0],
     status,
     startTime: toDateISOString(startTime),
@@ -3276,9 +2834,6 @@ function mapExtensionRecord(entry: any): ExtensionRecord {
     id: String(entry?.id ?? entry?.requestId ?? entry?.createdAt ?? Math.random()),
     bookingId: entry?.bookingId ? String(entry.bookingId) : '',
     newEndTime: toDateISOString(entry?.newEndTime ?? entry?.requestedEndTime ?? entry?.endTime),
-    originalEndTime: toDateISOString(entry?.originalEndTime ?? entry?.previousEndTime ?? entry?.startTime),
-    additionalHours: toNumber(entry?.additionalHours ?? entry?.hours),
-    additionalAmount: toNumber(entry?.additionalAmount ?? entry?.amount ?? entry?.pricing?.amount),
     status: (entry?.status ?? entry?.state ?? '').toString().toUpperCase(),
     notes: entry?.notes ?? entry?.reason,
     createdAt: toDateISOString(entry?.createdAt ?? entry?.timestamp),
@@ -3306,7 +2861,121 @@ function buildPaymentQrUrl(amount: number, description: string) {
   }).toString()}`;
 }
 
+function AddressesTab() {
+  const [addresses] = useState([
+    {
+      id: '1',
+      type: 'home',
+      name: 'Nhà riêng',
+      address: '123 Nguyễn Văn Linh, Quận 7, TP.HCM',
+      city: 'TP.HCM',
+      district: 'Quận 7'
+    }
+  ]);
+  const [showAddForm, setShowAddForm] = useState(false);
 
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between">
+          Địa chỉ của tôi
+          <Button onClick={() => setShowAddForm(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Thêm địa chỉ
+          </Button>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-4">
+          {addresses.map((address) => (
+            <Card key={address.id}>
+              <CardContent className="p-4">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center space-x-2 mb-1">
+                      <h3 className="font-medium">{address.name}</h3>
+                      <Badge variant="outline">{address.type === 'home' ? 'Nhà riêng' : 'Công ty'}</Badge>
+                    </div>
+                    <p className="text-gray-600">{address.address}</p>
+                  </div>
+                  <div className="flex space-x-2">
+                    <Button variant="outline" size="sm">Sửa</Button>
+                    <Button variant="outline" size="sm">Xóa</Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        <Dialog open={showAddForm} onOpenChange={setShowAddForm}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Thêm địa chỉ mới</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <Label>Loại địa điểm</Label>
+                <Select>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue placeholder="Chọn loại địa điểm" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="home">Nhà riêng</SelectItem>
+                    <SelectItem value="office">Công ty</SelectItem>
+                    <SelectItem value="other">Khác</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div>
+                <Label htmlFor="addressName">Tên gợi nhớ</Label>
+                <Input id="addressName" placeholder="VD: Nhà bố mẹ" className="mt-1" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Thành phố</Label>
+                  <Select>
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="Chọn thành phố" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="hcm">TP.HCM</SelectItem>
+                      <SelectItem value="hn">Hà Nội</SelectItem>
+                      <SelectItem value="dn">Đà Nẵng</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                <div>
+                  <Label>Quận/Huyện</Label>
+                  <Select>
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="Chọn quận/huyện" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="q1">Quận 1</SelectItem>
+                      <SelectItem value="q3">Quận 3</SelectItem>
+                      <SelectItem value="q7">Quận 7</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div>
+                <Label htmlFor="detailAddress">Địa chỉ cụ thể</Label>
+                <Input id="detailAddress" placeholder="Số nhà, tên đường..." className="mt-1" />
+              </div>
+
+              <Button className="w-full">Thêm địa chỉ</Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      </CardContent>
+    </Card>
+  );
+}
 
 type PaymentStreamEvent = {
   id: string;

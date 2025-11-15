@@ -1,12 +1,14 @@
 // Lightweight WebSocket client with auto-reconnect and event dispatch
 
+import { io, Socket } from 'socket.io-client';
+
 type EventHandler = (data: any) => void;
 
 export type WSClient = {
   send: (payload: any) => void;
   close: () => void;
   on: (event: string, handler: EventHandler) => () => void;
-  socket?: WebSocket;
+  socket?: WebSocket | Socket;
 };
 
 function isWsEnabled(): boolean {
@@ -14,7 +16,8 @@ function isWsEnabled(): boolean {
   return flag === 'true' || flag === '1';
 }
 
-const ensureTrailingSlash = (value: string) => (value.endsWith('/') ? value : `${value}/`);
+const ensureTrailingSlash = (value: string) =>
+  value.endsWith('/') ? value : `${value}/`;
 
 function normalizeToWs(urlString: string): string {
   try {
@@ -59,6 +62,32 @@ function buildWsUrl(path: string): string {
     }
   }
   return full.toString();
+}
+
+function getSocketIoBase(): string {
+  const override = import.meta.env.VITE_WS_HTTP_BASE_URL;
+  const resolveBase = (value: string) => {
+    try {
+      const url = new URL(value);
+      if (url.protocol === 'ws:') url.protocol = 'http:';
+      if (url.protocol === 'wss:') url.protocol = 'https:';
+      const basePath = url.pathname.replace(/\/?api\/?$/, '/');
+      return ensureTrailingSlash(`${url.protocol}//${url.host}${basePath}`);
+    } catch {
+      return ensureTrailingSlash(value);
+    }
+  };
+
+  if (override) return resolveBase(override);
+
+  const api = import.meta.env.VITE_API_BASE_URL;
+  if (api) return resolveBase(api);
+
+  if (typeof window !== 'undefined') {
+    const loc = window.location;
+    return ensureTrailingSlash(`${loc.protocol}//${loc.host}/`);
+  }
+  return 'https://localhost/';
 }
 
 export function createWebSocket(path: string, opts?: { reconnect?: boolean; debug?: boolean }): WSClient {
@@ -157,14 +186,52 @@ export function createWebSocket(path: string, opts?: { reconnect?: boolean; debu
 }
 
 // Convenience helpers
+function createSocketIoClient(path: string, options?: { debug?: boolean }) {
+  if (!isWsEnabled()) {
+    return createWebSocket(path, { reconnect: true, debug: options?.debug });
+  }
+
+  const base = getSocketIoBase();
+  const token = typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null;
+  const authToken = token ? `Bearer ${token}` : undefined;
+  const namespaceUrl = new URL(path.startsWith('/') ? path : `/${path}`, base).toString();
+
+  const socket: Socket = io(namespaceUrl, {
+    path: '/socket.io',
+    withCredentials: true,
+    transports: ['websocket'],
+    auth: authToken ? { token: authToken } : undefined,
+    query: token ? { token } : undefined,
+    autoConnect: true
+  });
+
+  if (options?.debug) {
+    socket.onAny((event, ...args) => console.log('[WS]', path, event, ...args));
+  }
+
+  return {
+    send(payload: any) {
+      socket.emit('message', payload);
+    },
+    close() {
+      socket.disconnect();
+    },
+    on(event: string, handler: EventHandler) {
+      socket.on(event, handler);
+      return () => socket.off(event, handler);
+    },
+    socket
+  };
+}
+
 export function connectNotificationSocket(options?: { debug?: boolean }) {
-  return createWebSocket('/notification', { reconnect: true, debug: options?.debug });
+  return createSocketIoClient('/notification', options);
 }
 
 export function connectChatSocket(options?: { debug?: boolean }) {
-  return createWebSocket('/chat', { reconnect: true, debug: options?.debug });
+  return createSocketIoClient('/chat', options);
 }
 
 export function connectPaymentSocket(options?: { debug?: boolean }) {
-  return createWebSocket('/payment', { reconnect: true, debug: options?.debug });
+  return createSocketIoClient('/payment', options);
 }

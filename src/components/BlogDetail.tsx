@@ -22,18 +22,18 @@ import { Separator } from "./ui/separator";
 interface Article {
   id: string;
   title: string;
-  excerpt: string;
-  content: string;
-  author: string;
-  authorAvatar: string;
-  authorBio: string;
-  category: string;
-  tags: string[];
-  coverImage: string;
-  publishedAt: string;
+  excerpt?: string;
+  content?: string;
+  author?: string;
+  authorAvatar?: string;
+  authorBio?: string;
+  category?: string;
+  tags?: string[];
+  coverImage?: string;
+  publishedAt?: string;
   updatedAt?: string;
-  readTime: number;
-  views: number;
+  readTime?: number;
+  views?: number;
 }
 
 interface RelatedArticle {
@@ -51,109 +51,82 @@ export function BlogDetail() {
   const [loading, setLoading] = useState(true);
   const [isLiked, setIsLiked] = useState(false);
   const [likes, setLikes] = useState(0);
+  const apiBase = import.meta.env.VITE_API_BASE_URL;
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchArticle();
     fetchRelatedArticles();
-  }, [id]);
+  }, [id, apiBase]);
 
   const fetchArticle = async () => {
+    if (!id || !apiBase) {
+      setError("Không thể tải bài viết");
+      setLoading(false);
+      return;
+    }
     setLoading(true);
+    setError(null);
     try {
-      // Mock data - replace with actual API call
-      const mockArticle: Article = {
-        id: id || "1",
-        title: "Top 10 Địa Điểm Du Lịch Phượt Đẹp Nhất Việt Nam",
-        excerpt:
-          "Khám phá những địa điểm tuyệt vời cho người yêu phượt tại Việt Nam với cảnh đẹp hoang sơ và văn hóa độc đáo.",
-        content: `
-          <p>Việt Nam là một đất nước tuyệt đẹp với nhiều địa điểm du lịch hấp dẫn dành cho những người yêu thích phượt. Từ những con đường đèo uốn lượn đến những bãi biển hoang sơ, từ những thửa ruộng bậc thang xanh mướt đến những đỉnh núi cao vút, Việt Nam có tất cả.</p>
-
-          <h2>1. Hà Giang - Vùng đất của những cung đường đèo</h2>
-          <p>Hà Giang nổi tiếng với cung đường Mã Pì Lèng hùng vĩ, những cánh đồng hoa tam giác mạch rực rỡ vào mùa thu, và văn hóa đa dạng của các dân tộc thiểu số. Đây là điểm đến không thể bỏ qua đối với bất kỳ ai yêu thích phượt.</p>
-
-          <h2>2. Đà Lạt - Thành phố ngàn hoa</h2>
-          <p>Với khí hậu mát mẻ quanh năm, Đà Lạt là điểm đến lý tưởng cho những chuyến phượt thư giãn. Bạn có thể khám phá những đồi thông, thác nước, và các vườn hoa đẹp mắt.</p>
-
-          <h2>3. Mù Cang Chải - Ruộng bậc thang đẹp nhất Việt Nam</h2>
-          <p>Mù Cang Chải nổi tiếng với những thửa ruộng bậc thang được xếp tầng như những bức tranh thiên nhiên tuyệt đẹp. Thời điểm đẹp nhất để đến đây là vào tháng 9-10 khi lúa chín vàng.</p>
-
-          <h2>4. Phong Nha - Kẻ Bàng</h2>
-          <p>Quần thể hang động Phong Nha - Kẻ Bàng là di sản thiên nhiên thế giới với hệ thống hang động kỳ vĩ, trong đó có Sơn Đoòng - hang động lớn nhất thế giới.</p>
-
-          <h2>5. Pù Luông - Thiên đường xanh</h2>
-          <p>Pù Luông là một khu bảo tồn thiên nhiên với cảnh quan núi non hùng vĩ, thung lũng xanh mướt và các bản làng của người Thái trắng mộc mạc, thân thiện.</p>
-
-          <h2>6. Sapa - Thị trấn sương mù</h2>
-          <p>Sapa không chỉ đẹp với những thửa ruộng bậc thang mà còn là nơi bạn có thể chinh phục đỉnh Fansipan - nóc nhà Đông Dương cao 3143m.</p>
-
-          <h2>7. Ninh Bình - Vịnh Hạ Long trên cạn</h2>
-          <p>Ninh Bình với Tràng An, Tam Cốc - Bích Động là những điểm đến lý tưởng để khám phá vẻ đẹp của thiên nhiên núi non trùng điệp, sông nước hữu tình.</p>
-
-          <h2>8. Quy Nhơn - Bình Định</h2>
-          <p>Quy Nhơn là một trong những thành phố biển yên bình nhất Việt Nam với những bãi biển hoang sơ, đẹp như tranh vẽ và giá cả phải chăng.</p>
-
-          <h2>9. Côn Đảo</h2>
-          <p>Côn Đảo không chỉ mang ý nghĩa lịch sử mà còn là thiên đường nhiệt đới với những bãi biển xanh trong vắt, rừng nguyên sinh và hệ sinh thái biển phong phú.</p>
-
-          <h2>10. Tây Nguyên - Đất đỏ bazan</h2>
-          <p>Tây Nguyên với các tỉnh như Đắk Lắk, Lâm Đồng, Gia Lai là vùng đất của những đồi chè xanh mướt, những thác nước hùng vĩ và văn hóa Tây Nguyên đặc sắc.</p>
-
-          <h2>Kết luận</h2>
-          <p>Việt Nam có rất nhiều địa điểm du lịch tuyệt đẹp đang chờ bạn khám phá. Mỗi vùng miền có một vẻ đẹp riêng, nét văn hóa độc đáo và món ăn đặc trưng. Hãy chuẩn bị hành trang và bắt đầu hành trình khám phá Việt Nam của bạn!</p>
-        `,
-        author: "Nguyễn Văn An",
-        authorAvatar:
-          "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=64",
-        authorBio:
-          "Travel blogger với 5 năm kinh nghiệm khám phá Việt Nam và Đông Nam Á. Yêu thích phượt và nhiếp ảnh du lịch.",
-        category: "Du lịch",
-        tags: ["Phượt", "Việt Nam", "Cẩm nang", "Top 10"],
-        coverImage:
-          "https://images.unsplash.com/photo-1593168098026-10d982cb9055?w=1200",
-        publishedAt: "2024-01-25",
-        updatedAt: "2024-01-26",
-        readTime: 8,
-        views: 1523,
+      const response = await fetch(`${apiBase}/blog/${id}`, {
+        credentials: "include",
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const json = await response.json();
+      const payload = json.data ?? json;
+      const mapped: Article = {
+        id: payload.id,
+        title: payload.title,
+        excerpt: payload.type,
+        content: payload.content ?? payload.description ?? "",
+        author: payload.authorName ?? "HacMieu Journey",
+        authorAvatar: payload.authorAvatar,
+        authorBio: payload.authorBio ?? "",
+        category: payload.type,
+        tags: payload.tags ?? [],
+        coverImage: payload.thumbnail,
+        publishedAt: payload.createdAt,
+        updatedAt: payload.updatedAt,
+        readTime: payload.readTime ?? 5,
+        views: payload.views ?? 0,
       };
-
-      setArticle(mockArticle);
-      setLikes(Math.floor(Math.random() * 100) + 50);
+      setArticle(mapped);
     } catch (error) {
       console.error("Error fetching article:", error);
-      toast.error("Không thể tải bài viết");
+      setArticle(null);
+      setError(error instanceof Error ? error.message : "Không thể tải bài viết");
     } finally {
       setLoading(false);
     }
   };
-
   const fetchRelatedArticles = async () => {
+    if (!apiBase) return;
     try {
-      // Mock data
-      const mockRelated: RelatedArticle[] = [
-        {
-          id: "2",
-          title: "Hướng Dẫn Cắm Trại An Toàn Cho Người Mới Bắt Đầu",
-          coverImage:
-            "https://images.unsplash.com/photo-1478131143081-80f7f84ca84d?w=400",
-          publishedAt: "2024-01-22",
-        },
-        {
-          id: "3",
-          title: "Checklist Đồ Đi Biển Đầy Đủ Nhất",
-          coverImage:
-            "https://images.unsplash.com/photo-1754491749176-2993a73e2f68?w=400",
-          publishedAt: "2024-01-20",
-        },
-        {
-          id: "5",
-          title: "Kinh Nghiệm Leo Núi Fansipan Cho Người Mới",
-          coverImage:
-            "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400",
-          publishedAt: "2024-01-15",
-        },
-      ];
-      setRelatedArticles(mockRelated);
+      const response = await fetch(`${apiBase}/blog?page=1&limit=4`, {
+        credentials: "include",
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const json = await response.json();
+      const payload = json.data ?? json;
+      const blogs = Array.isArray(payload.blogs)
+        ? payload.blogs
+        : Array.isArray(payload.items)
+        ? payload.items
+        : [];
+      const related = blogs
+        .filter((blog: any) => blog.id !== id)
+        .slice(0, 3)
+        .map((blog: any) => ({
+          id: blog.id,
+          title: blog.title,
+          coverImage: blog.thumbnail,
+          publishedAt: blog.createdAt,
+        }));
+      setRelatedArticles(related);
     } catch (error) {
       console.error("Error fetching related articles:", error);
     }
@@ -202,9 +175,10 @@ export function BlogDetail() {
 
   if (!article) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center">
-        <BookOpen className="h-16 w-16 text-gray-400 mb-4" />
-        <h2 className="text-2xl mb-2">Không tìm thấy bài viết</h2>
+      <div className="min-h-screen flex flex-col items-center justify-center text-center space-y-3">
+        <BookOpen className="h-16 w-16 text-gray-400 mb-2" />
+        <h2 className="text-2xl font-semibold">Không tìm thấy bài viết</h2>
+        {error && <p className="text-sm text-gray-500 max-w-md">{error}</p>}
         <Button onClick={() => navigate("/blog")}>Quay lại blog</Button>
       </div>
     );
@@ -250,20 +224,25 @@ export function BlogDetail() {
             <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600 mb-6">
               <div className="flex items-center space-x-2">
                 <img
-                  src={article.authorAvatar}
-                  alt={article.author}
+                  src={
+                    article.authorAvatar ??
+                    "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=64"
+                  }
+                  alt={article.author ?? "Tác giả"}
                   className="w-10 h-10 rounded-full"
                 />
                 <div>
                   <p className="font-semibold text-gray-900">
-                    {article.author}
+                    {article.author ?? "HacMieu Journey"}
                   </p>
                   <div className="flex items-center space-x-2">
                     <Calendar className="h-3 w-3" />
                     <span>
-                      {new Date(article.publishedAt).toLocaleDateString(
-                        "vi-VN"
-                      )}
+                      {article.publishedAt
+                        ? new Date(article.publishedAt).toLocaleDateString(
+                            "vi-VN"
+                          )
+                        : "Đang cập nhật"}
                     </span>
                   </div>
                 </div>
@@ -273,18 +252,18 @@ export function BlogDetail() {
 
               <div className="flex items-center space-x-1">
                 <Clock className="h-4 w-4" />
-                <span>{article.readTime} phút đọc</span>
+                <span>{article.readTime ?? 0} phút đọc</span>
               </div>
 
               <div className="flex items-center space-x-1">
                 <Eye className="h-4 w-4" />
-                <span>{article.views} lượt xem</span>
+                <span>{article.views ?? 0} lượt xem</span>
               </div>
             </div>
 
             {/* Tags */}
             <div className="flex flex-wrap gap-2 mb-6">
-              {article.tags.map((tag) => (
+              {(article.tags ?? []).map((tag) => (
                 <Badge
                   key={tag}
                   variant="outline"
@@ -348,7 +327,7 @@ export function BlogDetail() {
           {/* Article Content */}
           <div
             className="prose prose-lg max-w-none mb-12"
-            dangerouslySetInnerHTML={{ __html: article.content }}
+            dangerouslySetInnerHTML={{ __html: article.content || "" }}
           />
 
           {/* Author Bio */}
@@ -356,17 +335,22 @@ export function BlogDetail() {
             <CardContent className="p-6">
               <div className="flex items-start space-x-4">
                 <img
-                  src={article.authorAvatar}
-                  alt={article.author}
+                  src={
+                    article.authorAvatar ??
+                    "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=64"
+                  }
+                  alt={article.author ?? "Tác giả"}
                   className="w-16 h-16 rounded-full"
                 />
                 <div className="flex-1">
                   <div className="flex items-center justify-between mb-2">
                     <h3 className="font-semibold">
-                      Về tác giả: {article.author}
+                      Về tác giả: {article.author ?? "HacMieu Journey"}
                     </h3>
                   </div>
-                  <p className="text-sm text-gray-600">{article.authorBio}</p>
+                  <p className="text-sm text-gray-600">
+                    {article.authorBio || "Thông tin đang được cập nhật."}
+                  </p>
                 </div>
               </div>
             </CardContent>
@@ -415,3 +399,5 @@ export function BlogDetail() {
     </div>
   );
 }
+
+

@@ -27,6 +27,7 @@ interface PaymentDetails {
   paymentCode: string;
   amount: number;
   status: string;
+  createdAt?: string;
 }
 
 type StoredBookingSession = {
@@ -38,10 +39,22 @@ type StoredBookingSession = {
 
 const QR_BASE_URL = 'https://qr.sepay.vn/img';
 const BOOKING_SESSION_STORAGE_KEY = 'hacmieu_vehicle_booking_sessions';
+const DRIVER_LICENSE_ERROR_CODE = 'Error.DriverLicenseNotVerified';
+const DRIVER_LICENSE_ERROR_MESSAGE =
+  'Tài khoản chưa xác thực giấy phép lái xe nên không được phép thuê xe. Vui lòng cập nhật GPLX tại trang hồ sơ.';
+
+const PAYMENT_GRACE_PERIOD_MS = 15 * 60 * 1000;
 
 const sanitizeDescription = (value: string) => {
   if (!value) return 'VEHICLEPAYMENT';
   return value.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+};
+
+const formatCountdown = (ms: number) => {
+  const clamped = Math.max(ms, 0);
+  const minutes = Math.floor(clamped / 60000);
+  const seconds = Math.floor((clamped % 60000) / 1000);
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 };
 
 const isPaymentStatusSuccessful = (status?: string, message?: string) => {
@@ -136,9 +149,13 @@ export function BookingProcess() {
   const [priceLoading, setPriceLoading] = useState(false);
   const [bookingId, setBookingId] = useState<string | null>(null);
   const [bookingRequestInFlight, setBookingRequestInFlight] = useState(false);
+  const [fatalBookingError, setFatalBookingError] = useState<string | null>(null);
   const [paymentDetails, setPaymentDetails] = useState<PaymentDetails | null>(null);
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState<'idle' | 'waiting' | 'confirmed' | 'failed'>('idle');
+  const [paymentDeadline, setPaymentDeadline] = useState<number | null>(null);
+  const [paymentCountdown, setPaymentCountdown] = useState<string | null>(null);
+  const [paymentExpired, setPaymentExpired] = useState(false);
   const [wsStatus, setWsStatus] = useState<'idle' | 'connecting' | 'connected'>('idle');
   const [storedSession, setStoredSession] = useState<StoredBookingSession | null>(null);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
@@ -150,6 +167,27 @@ export function BookingProcess() {
     { number: 2, title: 'Thanh toán', icon: CreditCard },
     { number: 3, title: 'Hoàn tất', icon: Shield }
   ];
+
+  useEffect(() => {
+    if (!paymentDeadline) {
+      setPaymentCountdown(null);
+      setPaymentExpired(false);
+      return;
+    }
+    const updateCountdown = () => {
+      const diff = paymentDeadline - Date.now();
+      if (diff <= 0) {
+        setPaymentCountdown('00:00');
+        setPaymentExpired(true);
+      } else {
+        setPaymentCountdown(formatCountdown(diff));
+        setPaymentExpired(false);
+      }
+    };
+    updateCountdown();
+    const interval = window.setInterval(updateCountdown, 1000);
+    return () => window.clearInterval(interval);
+  }, [paymentDeadline]);
 
   useEffect(() => {
     if (!bookingData.vehicle) {
@@ -277,13 +315,24 @@ export function BookingProcess() {
 
   useEffect(() => {
     if (currentStep === 2) {
+      if (fatalBookingError) {
+        return;
+      }
+
       if (!bookingId && !bookingRequestInFlight) {
         initializePaymentFlow();
       } else if (bookingId && !paymentDetails && !paymentLoading) {
         loadPaymentDetails(bookingId);
       }
     }
-  }, [currentStep, bookingId, bookingRequestInFlight, paymentDetails, paymentLoading]);
+  }, [
+    currentStep,
+    bookingId,
+    bookingRequestInFlight,
+    paymentDetails,
+    paymentLoading,
+    fatalBookingError,
+  ]);
 
   useEffect(() => {
     if (currentStep !== 2 || !bookingId || !paymentDetails) {
@@ -299,7 +348,7 @@ export function BookingProcess() {
     }
     const interval = window.setInterval(() => {
       loadPaymentDetails(bookingId, { silent: true });
-    }, 5000);
+    }, 900000);
     return () => window.clearInterval(interval);
   }, [currentStep, bookingId, paymentStatus]);
 
@@ -322,8 +371,12 @@ export function BookingProcess() {
     const handleMessage = (payload: any) => {
       const data = payload?.data || payload;
       const eventBookingId = data.bookingId || data.data?.bookingId;
-      const eventPaymentCode = data.paymentCode || data.data?.paymentCode;
-      if (eventBookingId !== bookingId && eventPaymentCode !== paymentDetails.paymentCode) {
+      const eventPaymentCode =
+        data.paymentCode || data.data?.paymentCode || data.code || data.data?.code;
+      const matchesBooking = Boolean(eventBookingId && eventBookingId === bookingId);
+      const matchesPayment =
+        Boolean(eventPaymentCode && paymentDetails && eventPaymentCode === paymentDetails.paymentCode);
+      if (!matchesBooking && !matchesPayment) {
         return;
       }
 
@@ -424,9 +477,11 @@ export function BookingProcess() {
     }
 
     try {
-      // Create ISO datetime strings
-      const startDateTime = new Date(`${bookingData.startDate}T${bookingData.rentalDuration?.startTime || '08:00'}:00.000Z`);
-      const endDateTime = new Date(`${bookingData.endDate}T${bookingData.rentalDuration?.endTime || '18:00'}:00.000Z`);
+      // Interpret user times in local timezone, then convert to UTC when posting
+      const localStartString = `${bookingData.startDate}T${bookingData.rentalDuration?.startTime || '08:00'}:00`;
+      const localEndString = `${bookingData.endDate}T${bookingData.rentalDuration?.endTime || '18:00'}:00`;
+      const startDateTime = new Date(localStartString);
+      const endDateTime = new Date(localEndString);
 
       const bookingPayload = {
         vehicleId: bookingData.vehicle.id,
@@ -462,9 +517,16 @@ export function BookingProcess() {
         console.log('Booking created successfully:', bookingResult);
         return bookingResult;
       } else {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({}));
         console.error('Booking API error:', errorData);
-        throw new Error(errorData.message || `Không thể tạo booking (${response.status})`);
+        const serverMessage = errorData?.message || '';
+        if (
+          serverMessage === DRIVER_LICENSE_ERROR_CODE ||
+          serverMessage?.includes('DriverLicenseNotVerified')
+        ) {
+          throw new Error(DRIVER_LICENSE_ERROR_MESSAGE);
+        }
+        throw new Error(serverMessage || `Không thể tạo booking (${response.status})`);
       }
     } catch (error) {
       console.error('Error creating booking:', error);
@@ -517,16 +579,46 @@ export function BookingProcess() {
       const payload = json.data || json;
 
       const amountValue = Number(payload.amount ?? payload.totalAmount ?? 0) || 0;
-
+      const normalizedStatus = (payload.status || payload.paymentStatus || '').toString().toUpperCase();
+      const createdAt = payload.createdAt || payload.created_at || new Date().toISOString();
       const hydratedPayment: PaymentDetails = {
         id: payload.id,
         bookingId: payload.bookingId || id,
         paymentCode: (payload.paymentCode || sanitizeDescription(id)).toString(),
         amount: amountValue,
-        status: payload.status || payload.paymentStatus || 'PENDING'
+        status: normalizedStatus || 'PENDING',
+        createdAt
       };
-      setPaymentDetails(hydratedPayment);
+
       const sessionVehicleId = derivedVehicleId || payload.vehicleId || bookingData.vehicle?.id;
+
+      if (isPaymentStatusSuccessful(normalizedStatus)) {
+        setPaymentDetails(hydratedPayment);
+        setPaymentDeadline(null);
+        setPaymentCountdown(null);
+        setPaymentExpired(false);
+        clearSessionState();
+        finalizePaymentSuccess();
+        return;
+      }
+
+      if (normalizedStatus.includes('EXPIRED') || normalizedStatus.includes('CANCELLED')) {
+        setPaymentDetails(null);
+        setPaymentStatus('failed');
+        setPaymentDeadline(null);
+        setPaymentCountdown(null);
+        setPaymentExpired(false);
+        clearSessionState();
+        setBookingId(null);
+        setCurrentStep(1);
+        toast.error('Giao dịch trước đó đã hết hạn. Vui lòng tạo booking mới.');
+        return;
+      }
+
+      setPaymentDetails(hydratedPayment);
+      const deadline = new Date(createdAt).getTime() + PAYMENT_GRACE_PERIOD_MS;
+      setPaymentDeadline(deadline);
+      setPaymentExpired(false);
       if (sessionVehicleId) {
         const sessionPayload: StoredBookingSession = {
           bookingId: hydratedPayment.bookingId,
@@ -542,6 +634,9 @@ export function BookingProcess() {
       console.error('Error fetching payment details:', error);
       setPaymentDetails(null);
       setPaymentStatus('failed');
+      setPaymentDeadline(null);
+      setPaymentCountdown(null);
+      setPaymentExpired(false);
       if (options?.toastOnError) {
         toast.error('Không thể tải thông tin thanh toán');
       }
@@ -572,6 +667,9 @@ export function BookingProcess() {
     } catch (error) {
       console.error('Initialize payment flow error:', error);
       setPaymentStatus('failed');
+      if (error instanceof Error && error.message === DRIVER_LICENSE_ERROR_MESSAGE) {
+        setFatalBookingError(error.message);
+      }
       toast.error(error instanceof Error ? error.message : 'Không thể tạo thanh toán');
     } finally {
       setBookingRequestInFlight(false);
@@ -621,11 +719,15 @@ export function BookingProcess() {
     setPaymentDetails(null);
     setBookingId(null);
     setPaymentStatus('idle');
+    setPaymentDeadline(null);
+    setPaymentCountdown(null);
+    setPaymentExpired(false);
     setWsStatus('idle');
     setBookingRequestInFlight(false);
     setShowQR(false);
     setCurrentStep(1);
     clearSessionState();
+    setFatalBookingError(null);
   };
 
   const handleNextStep = () => {
@@ -782,6 +884,24 @@ export function BookingProcess() {
           ))}
         </div>
       </div>
+
+      {fatalBookingError && (
+        <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          <p>{fatalBookingError}</p>
+          <div className="mt-3 flex flex-wrap gap-3">
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => navigate('/profile/account')}
+            >
+              Cập nhật GPLX
+            </Button>
+            <Button size="sm" variant="outline" onClick={handleEditInformation}>
+              Thử lại sau
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
         {/* Main Content */}
@@ -1019,8 +1139,15 @@ export function BookingProcess() {
                             Số tiền cần thanh toán
                           </p>
                           {paymentDetails?.status && (
-                            <p className="text-xs font-medium">
+                            <p className={`text-xs font-medium ${paymentExpired ? 'text-red-600' : 'text-gray-700'}`}>
                               Trạng thái: <span className="uppercase">{paymentDetails.status}</span>
+                            </p>
+                          )}
+                          {paymentCountdown && (
+                            <p className={`text-xs font-medium ${paymentExpired ? 'text-red-600' : 'text-gray-600'}`}>
+                              {paymentExpired
+                                ? 'Giao dịch đã hết hạn. Vui lòng tạo lại.'
+                                : `Thời gian còn lại: ${paymentCountdown}`}
                             </p>
                           )}
                         </div>

@@ -17,16 +17,18 @@ import {
 interface Article {
   id: string;
   title: string;
-  excerpt: string;
-  content: string;
-  author: string;
-  authorAvatar: string;
-  category: string;
+  excerpt?: string;
+  content?: string;
+  author?: string;
+  authorAvatar?: string;
+  category?: string;
   tags: string[];
-  coverImage: string;
-  publishedAt: string;
-  readTime: number;
-  views: number;
+  coverImage?: string;
+  publishedAt?: string;
+  readTime?: number;
+  views?: number;
+  type?: string;
+  region?: string;
 }
 
 export function Blog() {
@@ -36,7 +38,7 @@ export function Blog() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
-
+  const apiBase = import.meta.env.VITE_API_BASE_URL;
   const articlesPerPage = 9;
 
   useEffect(() => {
@@ -46,167 +48,42 @@ export function Blog() {
   const fetchArticles = async () => {
     setLoading(true);
     try {
-      // Mock data - replace with actual API call
-      const mockArticles: Article[] = [
-        {
-          id: "1",
-          title: "Top 10 Địa Điểm Du Lịch Phượt Đẹp Nhất Việt Nam",
-          excerpt:
-            "Khám phá những địa điểm tuyệt vời cho người yêu phượt tại Việt Nam với cảnh đẹp hoang sơ và văn hóa độc đáo.",
-          content: "Full article content here...",
-          author: "Nguyễn Văn An",
-          authorAvatar:
-            "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=64",
-          category: "Du lịch",
-          tags: ["Phượt", "Việt Nam", "Cẩm nang"],
-          coverImage:
-            "https://images.unsplash.com/photo-1593168098026-10d982cb9055?w=800",
-          publishedAt: "2024-01-25",
-          readTime: 8,
-          views: 1523,
-        },
-        {
-          id: "2",
-          title: "Hướng Dẫn Cắm Trại An Toàn Cho Người Mới Bắt Đầu",
-          excerpt:
-            "Tất cả những gì bạn cần biết để có một chuyến cắm trại an toàn và thú vị, từ thiết bị đến kỹ năng sinh tồn cơ bản.",
-          content: "Full article content here...",
-          author: "Trần Thị Bình",
-          authorAvatar:
-            "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=64",
-          category: "Hướng dẫn",
-          tags: ["Camping", "An toàn", "Kỹ năng"],
-          coverImage:
-            "https://images.unsplash.com/photo-1478131143081-80f7f84ca84d?w=800",
-          publishedAt: "2024-01-22",
-          readTime: 10,
-          views: 2341,
-        },
-        {
-          id: "3",
-          title: "Checklist Đồ Đi Biển Đầy Đủ Nhất",
-          excerpt:
-            "Danh sách chi tiết những món đồ cần thiết cho chuyến đi biển hoàn hảo, đừng quên bất kỳ thứ gì!",
-          content: "Full article content here...",
-          author: "Lê Minh Cường",
-          authorAvatar:
-            "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=64",
-          category: "Cẩm nang",
-          tags: ["Biển", "Checklist", "Du lịch"],
-          coverImage:
-            "https://images.unsplash.com/photo-1754491749176-2993a73e2f68?w=800",
-          publishedAt: "2024-01-20",
-          readTime: 6,
-          views: 1876,
-        },
-        {
-          id: "4",
-          title: "5 Lý Do Bạn Nên Thuê Xe Máy Khi Du Lịch",
-          excerpt:
-            "Khám phá sự tự do và linh hoạt khi di chuyển bằng xe máy trong các chuyến du lịch của bạn.",
-          content: "Full article content here...",
-          author: "Phạm Thu Dung",
-          authorAvatar:
-            "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=64",
-          category: "Du lịch",
-          tags: ["Xe máy", "Thuê xe", "Mẹo hay"],
-          coverImage:
-            "https://images.unsplash.com/photo-1558981359-219d6364c9c8?w=800",
-          publishedAt: "2024-01-18",
-          readTime: 5,
-          views: 1234,
-        },
-        {
-          id: "5",
-          title: "Kinh Nghiệm Leo Núi Fansipan Cho Người Mới",
-          excerpt:
-            "Hướng dẫn chi tiết về cách chuẩn bị và chinh phục nóc nhà Đông Dương một cách an toàn.",
-          content: "Full article content here...",
-          author: "Hoàng Văn Em",
-          authorAvatar:
-            "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=64",
-          category: "Hướng dẫn",
-          tags: ["Leo núi", "Fansipan", "Kinh nghiệm"],
-          coverImage:
-            "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800",
-          publishedAt: "2024-01-15",
-          readTime: 12,
-          views: 3421,
-        },
-        {
-          id: "6",
-          title: "Bí Quyết Chụp Ảnh Du Lịch Đẹp Như Photographer",
-          excerpt:
-            "Những mẹo và kỹ thuật giúp bạn có những bức ảnh du lịch ấn tượng mà không cần máy ảnh chuyên nghiệp.",
-          content: "Full article content here...",
-          author: "Vũ Thị Phương",
-          authorAvatar:
-            "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=64",
-          category: "Kỹ năng",
-          tags: ["Chụp ảnh", "Photography", "Mẹo hay"],
-          coverImage:
-            "https://images.unsplash.com/photo-1606318834502-c3127255246c?w=800",
-          publishedAt: "2024-01-12",
-          readTime: 7,
-          views: 2156,
-        },
-        {
-          id: "7",
-          title: "Du Lịch Tiết Kiệm: 10 Mẹo Cắt Giảm Chi Phí",
-          excerpt:
-            "Cách để có một chuyến du lịch tuyệt vời mà không phải lo lắng về ví tiền của bạn.",
-          content: "Full article content here...",
-          author: "Đặng Minh Giang",
-          authorAvatar:
-            "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=64",
-          category: "Cẩm nang",
-          tags: ["Tiết kiệm", "Budget", "Mẹo hay"],
-          coverImage:
-            "https://images.unsplash.com/photo-1488646953014-85cb44e25828?w=800",
-          publishedAt: "2024-01-10",
-          readTime: 9,
-          views: 2876,
-        },
-        {
-          id: "8",
-          title: "Khám Phá Ẩm Thực Đường Phố Hà Nội",
-          excerpt:
-            "Một hành trình khám phá những món ăn đường phố đặc trưng và hấp dẫn nhất của thủ đô.",
-          content: "Full article content here...",
-          author: "Ngô Thu Hà",
-          authorAvatar:
-            "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=64",
-          category: "Ẩm thực",
-          tags: ["Hà Nội", "Ẩm thực", "Street food"],
-          coverImage:
-            "https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=800",
-          publishedAt: "2024-01-08",
-          readTime: 6,
-          views: 1654,
-        },
-        {
-          id: "9",
-          title: "Chuẩn Bị Gì Cho Chuyến Trekking Nhiều Ngày",
-          excerpt:
-            "Danh sách thiết bị và kỹ năng cần thiết để sẵn sàng cho một chuyến trekking dài ngày thành công.",
-          content: "Full article content here...",
-          author: "Phan Văn Khoa",
-          authorAvatar:
-            "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=64",
-          category: "Hướng dẫn",
-          tags: ["Trekking", "Thiết bị", "Chuẩn bị"],
-          coverImage:
-            "https://images.unsplash.com/photo-1551632436-cbf8dd35adfa?w=800",
-          publishedAt: "2024-01-05",
-          readTime: 11,
-          views: 1987,
-        },
-      ];
-
-      setArticles(mockArticles);
-      setFilteredArticles(mockArticles);
+      if (!apiBase) {
+        throw new Error("Chưa cấu hình API");
+      }
+      const response = await fetch(`${apiBase}/blog`, {
+        credentials: "include",
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const json = await response.json();
+      const payload = json.data ?? json;
+      const blogs = Array.isArray(payload.blogs)
+        ? payload.blogs
+        : Array.isArray(payload.items)
+        ? payload.items
+        : [];
+      const mapped: Article[] = blogs.map((blog: any) => ({
+        id: blog.id,
+        title: blog.title,
+        excerpt: blog.type
+          ? `${blog.type}${blog.region ? ` · ${blog.region}` : ""}`
+          : undefined,
+        author: blog.authorName ?? "HacMieu Journey",
+        category: blog.type,
+        tags: blog.tags ?? [],
+        coverImage: blog.thumbnail,
+        publishedAt: blog.createdAt,
+        type: blog.type,
+        region: blog.region,
+      }));
+      setArticles(mapped);
+      setFilteredArticles(mapped);
     } catch (error) {
       console.error("Error fetching articles:", error);
+      setArticles([]);
+      setFilteredArticles([]);
     } finally {
       setLoading(false);
     }
@@ -221,12 +98,14 @@ export function Blog() {
 
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(
-        (article) =>
-          article.title.toLowerCase().includes(query) ||
-          article.excerpt.toLowerCase().includes(query) ||
-          article.tags.some((tag) => tag.toLowerCase().includes(query))
-      );
+      filtered = filtered.filter((article) => {
+        const titleMatch = article.title?.toLowerCase().includes(query);
+        const excerptMatch = article.excerpt?.toLowerCase().includes(query);
+        const tagsMatch = (article.tags ?? []).some((tag) =>
+          tag.toLowerCase().includes(query)
+        );
+        return Boolean(titleMatch || excerptMatch || tagsMatch);
+      });
     }
 
     if (selectedCategory) {
@@ -238,7 +117,9 @@ export function Blog() {
     setFilteredArticles(filtered);
   };
 
-  const categories = Array.from(new Set(articles.map((a) => a.category)));
+  const categories = Array.from(
+    new Set(articles.map((a) => a.category).filter(Boolean))
+  ) as string[];
 
   const paginatedArticles = filteredArticles.slice(
     (currentPage - 1) * articlesPerPage,
@@ -443,3 +324,4 @@ export function Blog() {
     </div>
   );
 }
+

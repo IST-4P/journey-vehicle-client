@@ -25,7 +25,12 @@ import { HomePage } from "./components/HomePage";
 import { MotorcycleRental } from "./components/MotorcycleRental";
 import { UserProfile } from "./components/UserProfile";
 import { VehicleDetail } from "./components/VehicleDetail";
-import { clearTokenRefresh, logout, setupTokenRefresh } from "./utils/auth";
+import {
+  clearTokenRefresh,
+  logout,
+  refreshAccessToken,
+  setupTokenRefresh,
+} from "./utils/auth";
 
 interface User {
   avatarUrl?: string;
@@ -56,17 +61,67 @@ export default function App() {
   useEffect(() => {
     // Kiểm tra session bằng /user/profile
     const checkSession = async () => {
+      const ensureAccessToken = async () => {
+        let token = localStorage.getItem("accessToken");
+        if (!token) {
+          const refreshed = await refreshAccessToken();
+          if (refreshed) {
+            token = localStorage.getItem("accessToken");
+          }
+        }
+        return token;
+      };
+
       try {
         const apiBaseUrl = import.meta.env.VITE_API_BASE_URL;
-        const res = await fetch(`${apiBaseUrl}/user/profile`, {
-          method: "GET",
-          credentials: "include",
-        });
+        const fetchProfile = (token?: string | null) =>
+          fetch(`${apiBaseUrl}/user/profile`, {
+            method: "GET",
+            credentials: "include",
+            headers: token
+              ? {
+                  Authorization: `Bearer ${token}`,
+                }
+              : undefined,
+          });
+
+        let tokenToUse = await ensureAccessToken();
+        let res = await fetchProfile(tokenToUse);
+
+        // Nếu access token hết hạn, cố gắng refresh và thử lại
+        if (res.status === 401) {
+          const refreshed = await refreshAccessToken();
+          if (refreshed) {
+            tokenToUse = localStorage.getItem("accessToken");
+            res = await fetchProfile(tokenToUse);
+          }
+        }
 
         if (res.ok) {
           const data = await res.json();
           // Nếu lấy được profile, user đã đăng nhập
           setUser(data.user || data.data || data);
+
+          // Đảm bảo token được dispatch cho ChatWidget và các component khác
+          const currentToken = localStorage.getItem("accessToken");
+          const cookieAuth = localStorage.getItem("cookieAuth");
+
+          if (currentToken && typeof window !== 'undefined') {
+            console.log('[App] User authenticated, dispatching accessTokenChanged event');
+            window.dispatchEvent(
+              new CustomEvent('accessTokenChanged', {
+                detail: { token: currentToken },
+              }),
+            );
+          } else if (cookieAuth === 'true' && typeof window !== 'undefined') {
+            // FIX: Cookie-based auth detected
+            console.log('[App] User authenticated with cookie-based auth, dispatching event');
+            window.dispatchEvent(
+              new CustomEvent('accessTokenChanged', {
+                detail: { token: 'COOKIE_AUTH' },
+              }),
+            );
+          }
 
           // Setup auto refresh token mỗi 5 phút
           refreshIntervalRef.current = setupTokenRefresh(() => {
