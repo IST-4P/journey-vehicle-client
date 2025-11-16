@@ -10,7 +10,7 @@ import { Separator } from './ui/separator';
 import { Checkbox } from './ui/checkbox';
 import { Textarea } from './ui/textarea';
 import { ImageWithFallback } from './figma/ImageWithFallback';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 import { connectPaymentSocket } from '../utils/ws-client';
 
 interface PriceBreakdown {
