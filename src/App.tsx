@@ -15,6 +15,7 @@ import { CarRental } from "./components/CarRental";
 import { ChatWidget } from "./components/ChatWidget";
 import { ComboDetail } from "./components/ComboDetail";
 import { ComboRental } from "./components/ComboRental";
+import { Complaint } from "./components/Complaint";
 import { ComplaintDetail } from "./components/ComplaintDetail";
 import { Contact } from "./components/Contact";
 import { EquipmentDetail } from "./components/EquipmentDetail";
@@ -106,20 +107,24 @@ export default function App() {
           const currentToken = localStorage.getItem("accessToken");
           const cookieAuth = localStorage.getItem("cookieAuth");
 
-          if (currentToken && typeof window !== 'undefined') {
-            console.log('[App] User authenticated, dispatching accessTokenChanged event');
-            window.dispatchEvent(
-              new CustomEvent('accessTokenChanged', {
-                detail: { token: currentToken },
-              }),
+          if (currentToken && typeof window !== "undefined") {
+            console.log(
+              "[App] User authenticated, dispatching accessTokenChanged event"
             );
-          } else if (cookieAuth === 'true' && typeof window !== 'undefined') {
-            // FIX: Cookie-based auth detected
-            console.log('[App] User authenticated with cookie-based auth, dispatching event');
             window.dispatchEvent(
-              new CustomEvent('accessTokenChanged', {
-                detail: { token: 'COOKIE_AUTH' },
-              }),
+              new CustomEvent("accessTokenChanged", {
+                detail: { token: currentToken },
+              })
+            );
+          } else if (cookieAuth === "true" && typeof window !== "undefined") {
+            // FIX: Cookie-based auth detected
+            console.log(
+              "[App] User authenticated with cookie-based auth, dispatching event"
+            );
+            window.dispatchEvent(
+              new CustomEvent("accessTokenChanged", {
+                detail: { token: "COOKIE_AUTH" },
+              })
             );
           }
 
@@ -208,6 +213,10 @@ export default function App() {
             <Route path="/booking/:vehicleId" element={<BookingProcess />} />
             <Route path="/about" element={<AboutUs />} />
             <Route path="/contact" element={<Contact />} />
+            <Route
+              path="/complaint"
+              element={user ? <Complaint /> : <Navigate to="/" replace />}
+            />
             <Route
               path="/profile/*"
               element={

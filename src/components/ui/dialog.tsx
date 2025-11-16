@@ -1,8 +1,8 @@
 "use client";
 
-import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { XIcon } from "lucide-react";
+import * as React from "react";
 import { cn } from "./utils";
 
 function Dialog(props: React.ComponentProps<typeof DialogPrimitive.Root>) {
@@ -64,14 +64,10 @@ function DialogContent({
             "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 " +
             "fixed z-50 duration-200 border shadow-lg",
 
-          // ❌ Popup center (default)
-          !isFullscreen &&
-            "top-[50%] left-[50%] translate-x-[-50%] translate-y-[-50%] " +
-              "grid w-full max-w-[calc(100%-2rem)] gap-4 rounded-lg p-6 sm:max-w-lg",
-
-          // ✅ Fullscreen mode (complaint modal)
-          isFullscreen &&
-            "inset-0 rounded-none p-0 max-w-none max-h-none translate-x-0 translate-y-0",
+          // ✅ Fullscreen mode (complaint modal) - Apply first to override defaults
+          isFullscreen
+            ? "top-[50%] left-[50%] translate-x-[-50%] translate-y-[-50%]"
+            : "top-[50%] left-[50%] translate-x-[-50%] translate-y-[-50%] grid gap-4 rounded-lg p-6 w-full max-w-[calc(100%-2rem)] sm:max-w-lg",
 
           className
         )}
@@ -96,10 +92,7 @@ function DialogContent({
   );
 }
 
-function DialogHeader({
-  className,
-  ...props
-}: React.ComponentProps<"div">) {
+function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="dialog-header"
@@ -109,10 +102,7 @@ function DialogHeader({
   );
 }
 
-function DialogFooter({
-  className,
-  ...props
-}: React.ComponentProps<"div">) {
+function DialogFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="dialog-footer"
