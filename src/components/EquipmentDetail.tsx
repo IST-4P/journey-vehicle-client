@@ -20,6 +20,7 @@ import {
 } from "react-router-dom";
 import { toast } from "sonner";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
+import { formatVNDate } from "../utils/timezone";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -46,21 +47,40 @@ interface Equipment {
   images?: string[];
   rating: number;
   reviewCount: number;
+  categoryName?: string;
 }
 
 interface Review {
   id: string;
-  userName: string;
-  userAvatar: string;
+  bookingId: string;
+  vehicleId: string;
+  userId: string;
   rating: number;
-  comment: string;
-  date: string;
+  title: string;
+  type: number;
+  content: string;
+  images: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ReviewsResponse {
+  data: {
+    reviews: Review[];
+    page: number;
+    limit: number;
+    totalItems: number;
+    totalPages: number;
+  };
+  message: string;
+  statusCode: number;
 }
 
 export function EquipmentDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL;
   const [equipment, setEquipment] = useState<Equipment | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
@@ -75,30 +95,12 @@ export function EquipmentDetail() {
     endTime: string;
     hours: number;
   } | null>(null);
-
-  const reviews: Review[] = [
-    {
-      id: "1",
-      userName: "Trần Văn B",
-      userAvatar:
-        "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=64&h=64&fit=crop&crop=face",
-      rating: 5,
-      comment: "Thiết bị chất lượng tốt, đúng như mô tả!",
-      date: "2024-01-15",
-    },
-    {
-      id: "2",
-      userName: "Nguyễn Thị C",
-      userAvatar:
-        "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=64&h=64&fit=crop&crop=face",
-      rating: 4,
-      comment: "Rất tiện lợi, sẽ thuê lại lần sau",
-      date: "2024-01-10",
-    },
-  ];
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
 
   useEffect(() => {
     fetchEquipmentDetail();
+    fetchReviews();
 
     // Get rental duration from URL params
     const startDate = searchParams.get("startDate");
@@ -120,44 +122,89 @@ export function EquipmentDetail() {
         hours,
       });
     }
-  }, [id, searchParams]);
+  }, [id, searchParams, apiBaseUrl]);
 
   const fetchEquipmentDetail = async () => {
+    if (!id) {
+      return;
+    }
+
     setLoading(true);
     try {
-      // Mock data - replace with actual API call
-      const mockEquipment: Equipment = {
-        id: id || "1",
-        name: "Lều cắm trại 4 người",
-        brand: "Coleman",
-        description:
-          "Lều chống nước cao cấp, thiết kế hiện đại và dễ dàng lắp đặt. Phù hợp cho gia đình 4 người trong các chuyến camping, picnic hoặc du lịch.",
-        pricePerHour: 20000,
-        information: [
-          "Kích thước: 2.1m x 2.1m x 1.3m",
-          "Trọng lượng: 3.5kg",
-          "Chất liệu: Polyester chống nước",
-          "Chống nước: 2000mm",
-          "Thời gian lắp đặt: 5-10 phút",
-          "Bao gồm: Lều, cọc, dây giăng",
-        ],
-        quantity: 5,
-        status: "available",
-        images: [
-          "https://images.unsplash.com/photo-1478131143081-80f7f84ca84d?w=800",
-          "https://images.unsplash.com/photo-1504280390367-361c6d9f38f4?w=800",
-          "https://images.unsplash.com/photo-1537225228614-56cc3556d7ed?w=800",
-        ],
-        rating: 4.8,
-        reviewCount: 24,
+      const url = `${apiBaseUrl}/device/${id}`;
+      console.log('[EquipmentDetail] Fetching from:', url);
+
+      const response = await fetch(url, {
+        credentials: "include",
+      });
+
+      console.log('[EquipmentDetail] Response status:', response.status);
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch device (${response.status})`);
+      }
+
+      const payload = await response.json();
+      console.log('[EquipmentDetail] Payload:', payload);
+      const device = payload?.data ?? payload;
+
+      const normalized: Equipment = {
+        id: device.id,
+        name: device.name,
+        brand: device.categoryName ?? device.brand,
+        categoryName: device.categoryName,
+        description: device.description,
+        pricePerHour: Number(device.price) || 0,
+        information: Array.isArray(device.information) ? device.information : [],
+        quantity: device.quantity ?? 1,
+        status: device.status,
+        images: Array.isArray(device.images) ? device.images : [],
+        rating: device.rating ?? 4.8,
+        reviewCount: device.reviewCount ?? 0,
       };
 
-      setEquipment(mockEquipment);
+      setEquipment(normalized);
     } catch (error) {
       console.error("Error fetching equipment:", error);
       toast.error("Không thể tải thông tin thiết bị");
+      navigate("/equipment");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchReviews = async () => {
+    if (!id) {
+      return;
+    }
+
+    setReviewsLoading(true);
+    try {
+      const url = `${apiBaseUrl}/review/vehicle/${id}`;
+      console.log('[EquipmentDetail] Fetching reviews from:', url);
+
+      const response = await fetch(url, {
+        credentials: "include",
+      });
+
+      console.log('[EquipmentDetail] Reviews response status:', response.status);
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch reviews (${response.status})`);
+      }
+
+      const payload: ReviewsResponse = await response.json();
+      console.log('[EquipmentDetail] Reviews payload:', payload);
+
+      if (payload.data && Array.isArray(payload.data.reviews)) {
+        setReviews(payload.data.reviews);
+      }
+    } catch (error) {
+      console.error("Error fetching reviews:", error);
+      // Don't show error toast for reviews, just log it
+      setReviews([]);
+    } finally {
+      setReviewsLoading(false);
     }
   };
 
@@ -350,7 +397,7 @@ export function EquipmentDetail() {
                       Thông số
                     </TabsTrigger>
                     <TabsTrigger value="reviews" className="flex-1">
-                      Đánh giá ({reviews.length})
+                      Đánh giá ({reviewsLoading ? '...' : reviews.length})
                     </TabsTrigger>
                   </TabsList>
 
@@ -373,19 +420,29 @@ export function EquipmentDetail() {
 
                   <TabsContent value="reviews" className="mt-4">
                     <div className="space-y-4">
-                      {reviews.map((review) => (
-                        <div
-                          key={review.id}
-                          className="border-b pb-4 last:border-0"
-                        >
-                          <div className="flex items-center space-x-3 mb-2">
-                            <img
-                              src={review.userAvatar}
-                              alt={review.userName}
-                              className="w-10 h-10 rounded-full"
-                            />
-                            <div>
-                              <p className="font-semibold">{review.userName}</p>
+                      {reviewsLoading ? (
+                        <div className="text-center py-8">
+                          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600 mx-auto"></div>
+                          <p className="text-sm text-gray-500 mt-2">Đang tải đánh giá...</p>
+                        </div>
+                      ) : reviews.length === 0 ? (
+                        <div className="text-center py-8">
+                          <Star className="h-12 w-12 text-gray-300 mx-auto mb-2" />
+                          <p className="text-gray-500">Chưa có đánh giá nào</p>
+                        </div>
+                      ) : (
+                        reviews.map((review) => (
+                          <div
+                            key={review.id}
+                            className="border-b pb-4 last:border-0"
+                          >
+                            <div className="mb-3">
+                              <div className="flex items-center justify-between mb-2">
+                                <h4 className="font-semibold text-gray-900">{review.title}</h4>
+                                <span className="text-sm text-gray-500">
+                                  {formatVNDate(review.createdAt)}
+                                </span>
+                              </div>
                               <div className="flex items-center space-x-2">
                                 <div className="flex">
                                   {[...Array(5)].map((_, i) => (
@@ -399,17 +456,29 @@ export function EquipmentDetail() {
                                     />
                                   ))}
                                 </div>
-                                <span className="text-sm text-gray-500">
-                                  {review.date}
+                                <span className="text-sm font-medium text-gray-700">
+                                  {review.rating}/5
                                 </span>
                               </div>
                             </div>
+                            <p className="text-gray-700 mb-3">
+                              {review.content}
+                            </p>
+                            {review.images && review.images.length > 0 && (
+                              <div className="grid grid-cols-3 gap-2 mt-3">
+                                {review.images.map((image, idx) => (
+                                  <ImageWithFallback
+                                    key={idx}
+                                    src={image}
+                                    alt={`Review image ${idx + 1}`}
+                                    className="w-full h-24 object-cover rounded-lg"
+                                  />
+                                ))}
+                              </div>
+                            )}
                           </div>
-                          <p className="text-gray-700 ml-13">
-                            {review.comment}
-                          </p>
-                        </div>
-                      ))}
+                        ))
+                      )}
                     </div>
                   </TabsContent>
                 </Tabs>
@@ -463,41 +532,76 @@ export function EquipmentDetail() {
               </CardHeader>
 
               <CardContent className="space-y-4">
-                {/* Rental Duration */}
-                {rentalDuration && (
-                  <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-                    <div className="flex items-center space-x-2 mb-2">
-                      <Calendar className="h-4 w-4 text-green-700" />
-                      <span className="text-sm font-semibold text-green-900">
-                        Thời gian thuê
-                      </span>
+                {/* Rental Duration Selection */}
+                <div className="space-y-3">
+                  <label className="text-sm font-medium flex items-center gap-2">
+                    <Calendar className="h-4 w-4" />
+                    Thời gian thuê
+                  </label>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-gray-600 mb-1 block">Ngày nhận</label>
+                      <Input
+                        type="date"
+                        value={rentalDuration?.startDate || ""}
+                        onChange={(e) => {
+                          const days = rentalDuration?.endDate
+                            ? Math.ceil((new Date(rentalDuration.endDate).getTime() - new Date(e.target.value).getTime()) / (1000 * 60 * 60 * 24))
+                            : 1;
+                          setRentalDuration({
+                            startDate: e.target.value,
+                            startTime: "08:00",
+                            endDate: rentalDuration?.endDate || e.target.value,
+                            endTime: "18:00",
+                            hours: Math.max(1, days * 24),
+                          });
+                        }}
+                        min={new Date().toISOString().split("T")[0]}
+                      />
                     </div>
-                    <div className="text-sm text-green-700 space-y-1">
-                      <p>
-                        Từ:{" "}
-                        {new Date(
-                          `${rentalDuration.startDate}T${rentalDuration.startTime}`
-                        ).toLocaleString("vi-VN")}
-                      </p>
-                      <p>
-                        Đến:{" "}
-                        {new Date(
-                          `${rentalDuration.endDate}T${rentalDuration.endTime}`
-                        ).toLocaleString("vi-VN")}
-                      </p>
-                      <p className="font-semibold pt-2 border-t border-green-200">
-                        Tổng thời gian: {rentalDuration.hours} giờ
-                      </p>
+                    <div>
+                      <label className="text-xs text-gray-600 mb-1 block">Ngày trả</label>
+                      <Input
+                        type="date"
+                        value={rentalDuration?.endDate || ""}
+                        onChange={(e) => {
+                          const days = rentalDuration?.startDate
+                            ? Math.ceil((new Date(e.target.value).getTime() - new Date(rentalDuration.startDate).getTime()) / (1000 * 60 * 60 * 24))
+                            : 1;
+                          setRentalDuration({
+                            startDate: rentalDuration?.startDate || e.target.value,
+                            startTime: "08:00",
+                            endDate: e.target.value,
+                            endTime: "18:00",
+                            hours: Math.max(1, days * 24),
+                          });
+                        }}
+                        min={rentalDuration?.startDate || new Date().toISOString().split("T")[0]}
+                      />
                     </div>
                   </div>
-                )}
+
+                  {rentalDuration?.startDate && rentalDuration?.endDate && (
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm">
+                      <p className="font-semibold text-green-900">
+                        Tổng thời gian: {(() => {
+                          const start = new Date(rentalDuration.startDate);
+                          const end = new Date(rentalDuration.endDate);
+                          const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+                          return `${Math.max(1, days)} ngày`;
+                        })()}
+                      </p>
+                    </div>
+                  )}
+                </div>
 
                 <Separator />
 
                 {/* Pricing */}
                 <div className="space-y-3">
                   <div className="flex justify-between text-sm">
-                    <span className="text-gray-600">Giá thuê/giờ:</span>
+                    <span className="text-gray-600">Giá thuê/ngày:</span>
                     <span className="font-semibold">
                       {equipment.pricePerHour.toLocaleString("vi-VN")}đ
                     </span>
@@ -555,43 +659,18 @@ export function EquipmentDetail() {
                   )}
                 </div>
 
-                {/* Discount Code */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Mã giảm giá</label>
-                  <div className="flex space-x-2">
-                    <Input
-                      placeholder="Nhập mã giảm giá"
-                      value={discountCode}
-                      onChange={(e) => setDiscountCode(e.target.value)}
-                      disabled={!!appliedDiscount}
-                    />
-                    <Button
-                      onClick={handleApplyDiscount}
-                      disabled={!discountCode || !!appliedDiscount}
-                      variant="outline"
-                    >
-                      Áp dụng
-                    </Button>
-                  </div>
-                  {appliedDiscount && (
-                    <p className="text-sm text-green-600">
-                      ✓ {appliedDiscount.description}
-                    </p>
-                  )}
-                </div>
-
                 <Button
                   className="w-full"
                   size="lg"
                   onClick={handleBooking}
-                  disabled={!rentalDuration}
+                  disabled={!rentalDuration?.startDate || !rentalDuration?.endDate}
                 >
                   Đặt thuê ngay
                 </Button>
 
-                {!rentalDuration && (
+                {(!rentalDuration?.startDate || !rentalDuration?.endDate) && (
                   <p className="text-sm text-center text-amber-600">
-                    Vui lòng chọn thời gian thuê từ trang danh sách
+                    Vui lòng chọn thời gian thuê
                   </p>
                 )}
 

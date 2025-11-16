@@ -119,65 +119,51 @@ export function ComboDetail() {
   }, [id, searchParams]);
 
   const fetchComboDetail = async () => {
+    if (!id) {
+      return;
+    }
+
     setLoading(true);
     try {
-      // Mock data - replace with actual API call
-      const mockCombo: Combo = {
-        id: id || "1",
-        name: "Combo Camping Gia Đình",
-        description:
-          "Bộ thiết bị đầy đủ cho chuyến camping gia đình 4 người. Combo này bao gồm tất cả những gì bạn cần cho một chuyến cắm trại hoàn hảo, từ lều, túi ngủ đến dụng cụ nấu ăn và chiếu sáng.",
-        pricePerHour: 80000,
-        images: [
-          "https://images.unsplash.com/photo-1739257599500-85ff0ff1b359?w=800",
-          "https://images.unsplash.com/photo-1478131143081-80f7f84ca84d?w=800",
-          "https://images.unsplash.com/photo-1504280390367-361c6d9f38f4?w=800",
-        ],
-        devices: [
-          {
-            name: "Lều cắm trại 4 người",
-            quantity: 1,
-            description: "Lều chống nước Coleman, kích thước 2.1m x 2.1m",
-          },
-          {
-            name: "Túi ngủ",
-            quantity: 4,
-            description: "Túi ngủ giữ ấm, phù hợp nhiệt độ 5-25°C",
-          },
-          {
-            name: "Bếp gas mini",
-            quantity: 1,
-            description: "Bếp gas Kovea công suất 2800W",
-          },
-          {
-            name: "Bộ nồi niêu",
-            quantity: 1,
-            description: "Bộ 5 món chất liệu nhôm anodized",
-          },
-          {
-            name: "Đèn pin LED",
-            quantity: 2,
-            description: "Đèn pin siêu sáng 300 lumen, pin sạc",
-          },
-          {
-            name: "Bình nước giữ nhiệt",
-            quantity: 2,
-            description: "Bình Thermos 1L giữ nhiệt 24h",
-          },
-          {
-            name: "Bạt trải sàn",
-            quantity: 1,
-            description: "Bạt chống thấm kích thước 2.5m x 2.5m",
-          },
-        ],
-        rating: 4.9,
-        reviewCount: 45,
+      const url = `${import.meta.env.VITE_API_BASE_URL}/combo/${id}`;
+      console.log('[ComboDetail] Fetching from:', url);
+
+      const response = await fetch(url, {
+        credentials: "include",
+      });
+
+      console.log('[ComboDetail] Response status:', response.status);
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch combo (${response.status})`);
+      }
+
+      const payload = await response.json();
+      console.log('[ComboDetail] Payload:', payload);
+      const comboData = payload?.data ?? payload;
+
+      const normalized: Combo = {
+        id: comboData.id,
+        name: comboData.name,
+        description: comboData.description,
+        pricePerHour: Number(comboData.price) || 0,
+        images: Array.isArray(comboData.images) ? comboData.images : [],
+        devices: Array.isArray(comboData.devices)
+          ? comboData.devices.map((device: any) => ({
+              name: device.name || "",
+              quantity: device.quantity || 1,
+              description: device.description,
+            }))
+          : [],
+        rating: comboData.rating ?? 4.8,
+        reviewCount: comboData.reviewCount ?? 0,
       };
 
-      setCombo(mockCombo);
+      setCombo(normalized);
     } catch (error) {
       console.error("Error fetching combo:", error);
       toast.error("Không thể tải thông tin combo");
+      navigate("/combos");
     } finally {
       setLoading(false);
     }

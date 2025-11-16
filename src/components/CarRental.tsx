@@ -33,56 +33,108 @@ interface Car {
   images: string[];
   createdAt: string;
   updatedAt: string;
+  // Computed from reviews
+  actualRating?: number;
+  reviewCount?: number;
 }
 
 interface Brand {
   id: string;
   name: string;
+  type?: 'CAR' | 'MOTORCYCLE';
 }
 
 interface Model {
   id: string;
   name: string;
   brandId: string;
+  type?: 'CAR' | 'MOTORCYCLE';
 }
-export function CarRental() {
+
+const createEmptyFilters = () => ({
+  priceRange: '',
+  seats: '',
+  brand: '',
+  model: '',
+  transmission: '',
+  location: '',
+  startDate: '',
+  startTime: '',
+  endDate: '',
+  endTime: ''
+});
+interface CarRentalProps {
+  vehicleType?: 'CAR' | 'MOTORCYCLE';
+}
+
+export function CarRental({ vehicleType = 'CAR' }: CarRentalProps) {
   const [filteredCars, setFilteredCars] = useState<Car[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [totalItems, setTotalItems] = useState(0);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [models, setModels] = useState<Model[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   
+  const isMotorcycle = vehicleType === 'MOTORCYCLE';
+  const heroTitle = isMotorcycle ? 'Thuê xe máy' : 'Thuê xe ô tô';
+  const heroSubtitle = isMotorcycle
+    ? 'Tìm kiếm và thuê xe máy phù hợp với nhu cầu của bạn'
+    : 'Tìm kiếm và thuê xe ô tô phù hợp với nhu cầu của bạn';
+  const vehicleLabel = isMotorcycle ? 'xe máy' : 'xe ô tô';
+
   // Filters để hiển thị trong form (chưa áp dụng)
-  const [filters, setFilters] = useState({
-    priceRange: '',
-    seats: '', // Giữ là string để tương thích với Select component
-    brand: '',
-    model: '',
-    transmission: '',
-    location: '',
-    startDate: '',
-    startTime: '',
-    endDate: '',
-    endTime: ''
-  });
+  const [filters, setFilters] = useState(createEmptyFilters());
 
   // Applied filters để thực sự lọc dữ liệu
-  const [appliedFilters, setAppliedFilters] = useState({
-    priceRange: '',
-    seats: '', // Giữ là string, sẽ convert khi cần
-    brand: '',
-    model: '',
-    transmission: '',
-    location: '',
-    startDate: '',
-    startTime: '',
-    endDate: '',
-    endTime: ''
-  });
+  const [appliedFilters, setAppliedFilters] = useState(createEmptyFilters());
 
   const itemsPerPage = 12;
+
+  // Fetch reviews for all cars
+  useEffect(() => {
+    const fetchReviewsForCars = async () => {
+      if (filteredCars.length === 0 || filteredCars[0]?.actualRating !== undefined) return;
+
+      const carsWithReviews = await Promise.all(
+        filteredCars.map(async (car) => {
+          try {
+            const response = await fetch(
+              `${import.meta.env.VITE_API_BASE_URL}/review/vehicle/${car.id}`,
+              { credentials: 'include' }
+            );
+
+            if (response.ok) {
+              const data = await response.json();
+              const reviews = data.data?.reviews || [];
+
+              if (reviews.length > 0) {
+                const avgRating = reviews.reduce((sum: number, r: any) => sum + r.rating, 0) / reviews.length;
+                return {
+                  ...car,
+                  actualRating: Number(avgRating.toFixed(1)),
+                  reviewCount: reviews.length
+                };
+              }
+            }
+          } catch (error) {
+            console.error(`Error fetching reviews for car ${car.id}:`, error);
+          }
+
+          return {
+            ...car,
+            actualRating: car.averageRating,
+            reviewCount: 0
+          };
+        })
+      );
+
+      setFilteredCars(carsWithReviews);
+    };
+
+    fetchReviewsForCars();
+  }, [filteredCars.length, currentPage]); // Refetch when page or car count changes
 
   useEffect(() => {
     const fetchData = async () => {
@@ -91,7 +143,7 @@ export function CarRental() {
       try {
         // Xây dựng query parameters từ filters
         const queryParams = new URLSearchParams({
-          type: 'CAR',
+          type: vehicleType,
           page: currentPage.toString(),
           limit: itemsPerPage.toString()
         });
@@ -116,14 +168,18 @@ export function CarRental() {
         }
 
         if (appliedFilters.transmission) {
-          queryParams.append('transmission', appliedFilters.transmission);
+          if (isMotorcycle) {
+            queryParams.append('engineType', appliedFilters.transmission);
+          } else {
+            queryParams.append('transmission', appliedFilters.transmission);
+          }
         }
 
         if (appliedFilters.location) {
           queryParams.append('location', appliedFilters.location);
         }
 
-        // Chỉ lấy xe có status ACTIVE
+        // Chỉ lấy xe có trạng thái ACTIVE
         queryParams.append('status', 'ACTIVE');
 
         const apiUrl = `${import.meta.env.VITE_API_BASE_URL}/vehicle?${queryParams.toString()}`;
@@ -137,9 +193,10 @@ export function CarRental() {
           
           // Kiểm tra message Error.VehicleNotFound
           if (data.message === "Error.VehicleNotFound") {
-            setFilteredCars([]);
-            setTotalPages(1);
-            setErrorMessage('Không tìm thấy xe phù hợp với bộ lọc hiện tại.');
+          setFilteredCars([]);
+          setTotalPages(1);
+          setTotalItems(0);
+          setErrorMessage('Không tìm thấy xe phù hợp với bộ lọc hiện tại.');
             return;
           }
           
@@ -166,6 +223,7 @@ export function CarRental() {
           
           setFilteredCars(vehicles);
           setTotalPages(data.data.totalPages || 1);
+          setTotalItems(Number(data.data?.totalItems ?? vehicles.length));
           setErrorMessage(null);
         } else {
           // Xử lý các response codes khác (404, 500, etc.)
@@ -174,14 +232,18 @@ export function CarRental() {
           if (response.status === 404 && errorData?.message === "Error.VehicleNotFound") {
             setFilteredCars([]);
             setTotalPages(1);
+            setTotalItems(0);
             setErrorMessage('Không tìm thấy xe phù hợp với bộ lọc hiện tại.');
           } else {
             setFilteredCars([]);
             setTotalPages(1);
+            setTotalItems(0);
             setErrorMessage('Không thể tải danh sách xe. Vui lòng thử lại.');
           }
         }
       } catch (error) {
+        setFilteredCars([]);
+        setTotalItems(0);
         setErrorMessage('Không thể tải danh sách xe. Vui lòng thử lại.');
       } finally {
         setLoading(false);
@@ -209,35 +271,42 @@ export function CarRental() {
     initializeDriverLicense();
   }, []);
 
+  useEffect(() => {
+    setFilters(createEmptyFilters());
+    setAppliedFilters(createEmptyFilters());
+    setCurrentPage(1);
+    setTotalItems(0);
+  }, [vehicleType]);
+
   // Fetch brands một lần khi component mount
   useEffect(() => {
     const fetchBrands = async () => {
       try {
-        const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/vehicle-brand`, { 
+        const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/vehicle-brand?type=${vehicleType}`, { 
           credentials: 'include' 
         });
-        
+
         if (response.ok) {
           const data = await response.json();
-          
-          // Kiểm tra cấu trúc response và set brands
+          let items: Brand[] = [];
+
           if (data.data && data.data.brands && Array.isArray(data.data.brands)) {
-            setBrands(data.data.brands);
+            items = data.data.brands;
           } else if (data.data && Array.isArray(data.data)) {
-            setBrands(data.data);
+            items = data.data;
           } else if (Array.isArray(data)) {
-            setBrands(data);
+            items = data;
           } else if (data.data && typeof data.data === 'object') {
-            // Try to find brands in various nested structures
             const possibleBrands = Object.values(data.data).find(value => Array.isArray(value));
             if (possibleBrands) {
-              setBrands(possibleBrands as Brand[]);
-            } else {
-              setBrands([]);
+              items = possibleBrands as Brand[];
             }
-          } else {
-            setBrands([]);
           }
+
+          const filtered = items.filter(
+            (brand) => brand.type?.toUpperCase() === vehicleType,
+          );
+          setBrands(filtered);
         } else {
           setBrands([]);
         }
@@ -247,29 +316,32 @@ export function CarRental() {
     };
 
     fetchBrands();
-  }, []); // Chỉ chạy một lần khi component mount
+  }, [vehicleType]); // Reload when vehicle type changes
 
   // Fetch models một lần khi component mount
   useEffect(() => {
     const fetchModels = async () => {
       try {
-        const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/vehicle-model`, { 
+        const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/vehicle-model?type=${vehicleType}`, { 
           credentials: 'include' 
         });
         
         if (response.ok) {
           const data = await response.json();
-          
-          // Kiểm tra cấu trúc response và set models
+          let items: Model[] = [];
+
           if (data.data && data.data.models && Array.isArray(data.data.models)) {
-            setModels(data.data.models);
+            items = data.data.models;
           } else if (data.data && Array.isArray(data.data)) {
-            setModels(data.data);
+            items = data.data;
           } else if (Array.isArray(data)) {
-            setModels(data);
-          } else {
-            setModels([]);
+            items = data;
           }
+
+          const filtered = items.filter(
+            (model) => !model.type || model.type?.toUpperCase() === vehicleType,
+          );
+          setModels(filtered);
         } else {
           setModels([]);
         }
@@ -279,7 +351,7 @@ export function CarRental() {
     };
 
     fetchModels();
-  }, []); // Chỉ chạy một lần khi component mount
+  }, [vehicleType]); // Reload when vehicle type changes
 
   const handleFilterChange = (key: string, value: string) => {
     setFilters(prev => {
@@ -311,18 +383,7 @@ export function CarRental() {
   };
 
   const clearFilters = () => {
-    const emptyFilters = {
-      priceRange: '',
-      seats: '',
-      brand: '',
-      model: '',
-      transmission: '',
-      location: '',
-      startDate: '',
-      startTime: '',
-      endDate: '',
-      endTime: ''
-    };
+    const emptyFilters = createEmptyFilters();
     setFilters(emptyFilters);
     setAppliedFilters(emptyFilters);
     setCurrentPage(1); // Reset về trang 1 khi clear filters
@@ -361,6 +422,15 @@ export function CarRental() {
     { value: 'MANUAL', label: 'Số sàn' },
     { value: 'AUTOMATIC', label: 'Số tự động' }
   ];
+
+  const motorcycleTypes = [
+    { value: 'TAY_GA', label: 'Xe tay ga' },
+    { value: 'XE_SO', label: 'Xe số' }
+  ];
+  
+  const transmissionOptions = isMotorcycle ? motorcycleTypes : transmissions;
+  const transmissionLabel = isMotorcycle ? 'Loại xe máy' : 'Loại hộp số';
+  const transmissionPlaceholder = isMotorcycle ? 'Chọn loại xe tay ga/số' : 'Chọn loại hộp số';
   const seatOptions = ['4', '5', '7', '8'];
   const priceRanges = [
     { value: '0-500000', label: 'Dưới 500K' },
@@ -392,10 +462,10 @@ export function CarRental() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center">
             <h1 className="text-4xl md:text-6xl font-bold mb-6">
-              Thuê xe ô tô
+              {heroTitle}
             </h1>
             <p className="text-xl md:text-2xl mb-8 text-blue-100 max-w-3xl mx-auto">
-              Tìm kiếm và thuê xe ô tô phù hợp với nhu cầu của bạn
+              {heroSubtitle}
             </p>
           </div>
         </div>
@@ -492,13 +562,13 @@ export function CarRental() {
 
             {/* Transmission */}
             <div>
-              <label className="text-sm font-medium mb-2 block">Loại hộp số</label>
+              <label className="text-sm font-medium mb-2 block">{transmissionLabel}</label>
               <Select value={filters.transmission} onValueChange={(value: string) => handleFilterChange('transmission', value)}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Chọn loại hộp số" />
+                  <SelectValue placeholder={transmissionPlaceholder} />
                 </SelectTrigger>
                 <SelectContent>
-                  {transmissions.map(trans => (
+                  {transmissionOptions.map(trans => (
                     <SelectItem key={trans.value} value={trans.value}>{trans.label}</SelectItem>
                   ))}
                 </SelectContent>
@@ -582,7 +652,10 @@ export function CarRental() {
         <div>
           <div className="flex items-center justify-between mb-6">
             <p className="text-gray-600">
-              Tìm thấy {filteredCars.length} xe ô tô
+              Tìm thấy {filteredCars.length} {vehicleLabel}{' '}
+              {totalItems > 0 && totalItems !== filteredCars.length
+                ? `(trên tổng ${totalItems})`
+                : ''}
             </p>
           </div>
 
@@ -626,8 +699,10 @@ export function CarRental() {
                   <div className="flex items-center mb-2">
                     <div className="flex items-center">
                       <Star className="h-4 w-4 text-yellow-400 fill-current mr-1" />
-                      <span className="text-sm font-medium">{car.averageRating || 0}</span>
-                      <span className="text-sm text-gray-600 ml-1">({car.totalTrips} chuyến)</span>
+                      <span className="text-sm font-medium">{car.actualRating ?? car.averageRating ?? 0}</span>
+                      <span className="text-sm text-gray-600 ml-1">
+                        ({car.reviewCount !== undefined ? `${car.reviewCount} đánh giá` : `${car.totalTrips} chuyến`})
+                      </span>
                     </div>
                   </div>
 

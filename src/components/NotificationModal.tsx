@@ -7,6 +7,7 @@ import { CheckCheck, Clock, X, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { connectNotificationSocket } from '../utils/ws-client';
+import { formatRelativeTime, convertUTCToVN } from '../utils/timezone';
 
 interface Notification {
   id: string; 
@@ -279,9 +280,10 @@ export function NotificationModal({ isOpen, onClose, onNotificationChange }: Not
 
   const formatTime = (dateString: string) => {
     try {
-      const date = new Date(dateString);
+      // Convert UTC to VN time for display
+      const vnDate = convertUTCToVN(dateString);
       const now = new Date();
-      const diffMs = now.getTime() - date.getTime();
+      const diffMs = now.getTime() - vnDate.getTime();
       const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
       
       if (diffDays === 0) {
@@ -291,7 +293,9 @@ export function NotificationModal({ isOpen, onClose, onNotificationChange }: Not
       } else if (diffDays < 7) {
         return `${diffDays} ngày trước`;
       } else {
-        return date.toLocaleDateString('vi-VN');
+        return vnDate.toLocaleDateString('vi-VN', {
+          timeZone: 'Asia/Ho_Chi_Minh',
+        });
       }
     } catch {
       return 'Không xác định';

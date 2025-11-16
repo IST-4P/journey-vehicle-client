@@ -25,7 +25,7 @@ interface VehicleRecommendationsProps {
   title: string;
   vehicles: Vehicle[];
   viewAllLink: string;
-  type: 'car' | 'motorcycle';
+  type: 'car' | 'motorcycle' | 'equipment';
 }
 
 export function VehicleRecommendations({ title, vehicles, viewAllLink, type }: VehicleRecommendationsProps) {
@@ -115,13 +115,15 @@ export function VehicleRecommendations({ title, vehicles, viewAllLink, type }: V
                   <h3 className="font-semibold text-lg mb-1">{vehicle.name}</h3>
                   <p className="text-sm text-gray-600 mb-2">{vehicle.brand}</p>
                   
-                  <div className="flex items-center justify-between text-sm text-gray-500 mb-3">
-                    <span>{getTransmissionLabel(vehicle.transmission)}</span>
-                    <span>{getFuelLabel(vehicle.fuel)}</span>
-                    {vehicle.seats && (
-                      <span>{vehicle.seats} chỗ</span>
-                    )}
-                  </div>
+                  {type !== 'equipment' && (
+                    <div className="flex items-center justify-between text-sm text-gray-500 mb-3">
+                      <span>{getTransmissionLabel(vehicle.transmission)}</span>
+                      <span>{getFuelLabel(vehicle.fuel)}</span>
+                      {vehicle.seats && (
+                        <span>{vehicle.seats} chỗ</span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-3">
@@ -135,7 +137,7 @@ export function VehicleRecommendations({ title, vehicles, viewAllLink, type }: V
                     </div>
                   </div>
                   
-                  <Link to={`/vehicle/${type}/${vehicle.id}`}>
+                  <Link to={`/vehicle/${vehicle.id}`}>
                     <Button size="sm" disabled={!vehicle.available} className="w-full">
                       {vehicle.available ? 'Xem chi tiết' : 'Không có sẵn'}
                     </Button>

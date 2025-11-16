@@ -1,20 +1,12 @@
-// Utility functions for authentication
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
-
-// Helper: Dispatch token change event (EXPORTED để AuthModal có thể dùng)
 export const dispatchTokenChangeEvent = (token: string | null) => {
   if (typeof window !== 'undefined') {
     console.log('[Auth] Dispatching token change event:', token ? 'Token exists' : 'Token removed');
-
-    // FIX: Dispatch event để tất cả listeners có thể nhận được
     window.dispatchEvent(
       new CustomEvent('accessTokenChanged', {
         detail: { token },
       }),
     );
-
-    // FIX: Chỉ dispatch StorageEvent nếu KHÔNG phải cookie auth
-    // Cookie auth dùng riêng event 'cookieAuth'
     if (token !== 'COOKIE_AUTH') {
       window.dispatchEvent(
         new StorageEvent('storage', {
@@ -29,6 +21,34 @@ export const dispatchTokenChangeEvent = (token: string | null) => {
 
 // Refresh access token
 export const refreshAccessToken = async (): Promise<boolean> => {
+  if (typeof window !== 'undefined' && localStorage.getItem('cookieAuth') === 'true') {
+    console.log(
+      '[Auth] Cookie-based auth detected, verifying session via profile endpoint'
+    );
+
+    // Verify cookie session is still valid by checking profile endpoint
+    try {
+      const profileResponse = await fetch(`${API_BASE_URL}/user/profile`, {
+        method: 'GET',
+        credentials: 'include',
+      });
+
+      if (profileResponse.ok) {
+        console.log('[Auth] Cookie session verified successfully');
+        return true;
+      } else {
+        console.error('[Auth] Cookie session invalid, status:', profileResponse.status);
+        // Clear cookie auth flag if session is invalid
+        localStorage.removeItem('cookieAuth');
+        dispatchTokenChangeEvent(null);
+        return false;
+      }
+    } catch (error) {
+      console.error('[Auth] Error verifying cookie session:', error);
+      return false;
+    }
+  }
+
   try {
     const response = await fetch(`${API_BASE_URL}/auth/refresh-token`, {
       method: 'POST',
@@ -53,16 +73,12 @@ export const refreshAccessToken = async (): Promise<boolean> => {
     if (accessToken) {
       localStorage.setItem('accessToken', accessToken);
       console.log('[Auth] Access token updated');
-      // FIX: Dispatch event với token mới
       dispatchTokenChangeEvent(accessToken);
     } else {
-      // FIX: Cookie-based auth - không có token trong body nhưng vẫn success
       const cookieAuth = localStorage.getItem('cookieAuth');
       if (cookieAuth === 'true') {
         console.log('[Auth] Cookie-based auth refresh successful');
-        // Không dispatch event vì cookie auth không thay đổi
       } else {
-        // API không trả token và không phải cookie auth -> có thể là lỗi
         dispatchTokenChangeEvent(null);
       }
     }
@@ -70,8 +86,6 @@ export const refreshAccessToken = async (): Promise<boolean> => {
     if (refreshToken) {
       localStorage.setItem('refreshToken', refreshToken);
     }
-
-    // FIX: Return true nếu response OK (dù có token trong body hay không)
     return true;
   } catch (error) {
     console.error('Error refreshing token:', error);
@@ -90,12 +104,9 @@ export const logout = async (): Promise<boolean> => {
       },
     });
 
-    // Remove tokens from localStorage
     localStorage.removeItem('accessToken');
     localStorage.removeItem('refreshToken');
-    localStorage.removeItem('cookieAuth'); // FIX: Also remove cookieAuth flag
-
-    // FIX: Dispatch event để notify các component khác
+    localStorage.removeItem('cookieAuth');
     dispatchTokenChangeEvent(null);
 
     if (response.ok) {
@@ -107,19 +118,25 @@ export const logout = async (): Promise<boolean> => {
     }
   } catch (error) {
     console.error('[Auth] Error during logout:', error);
-    // Vẫn trả về true vì đã xóa tokens từ localStorage
+
     return true;
   }
 };
 
-// Setup automatic token refresh every 5 minutes
-export const setupTokenRefresh = (onTokenExpired?: () => void) => {
+export const setupTokenRefresh = (onTokenExpired?: () => void): number | null => {
+  if (typeof window !== 'undefined' && localStorage.getItem('cookieAuth') === 'true') {
+    console.log(
+      '[Auth] Cookie-based auth detected, skipping automatic token refresh'
+    );
+    return null;
+  }
+
   // Refresh ngay lập tức khi setup
   refreshAccessToken();
-  
+
   const refreshInterval = setInterval(async () => {
     const success = await refreshAccessToken();
-    
+
     if (!success && onTokenExpired) {
       // Nếu refresh thất bại, có thể token đã hết hạn hoàn toàn
       console.warn('[Auth] Token refresh failed, calling onTokenExpired callback');

@@ -53,179 +53,48 @@ export function ComboRental() {
   const fetchCombos = async () => {
     setLoading(true);
     try {
-      // Mock data - replace with actual API call
-      const mockCombos: Combo[] = [
-        {
-          id: "1",
-          name: "Combo Camping Gia Đình",
-          description: "Bộ thiết bị đầy đủ cho chuyến camping gia đình 4 người",
-          pricePerHour: 80000,
-          images: [
-            "https://images.unsplash.com/photo-1739257599500-85ff0ff1b359?w=500",
-          ],
-          deviceCount: 7,
-          devices: [
-            { name: "Lều cắm trại 4 người", quantity: 1 },
-            { name: "Túi ngủ", quantity: 4 },
-            { name: "Bếp gas mini", quantity: 1 },
-            { name: "Bộ nồi niêu", quantity: 1 },
-            { name: "Đèn pin LED", quantity: 2 },
-            { name: "Bình nước giữ nhiệt", quantity: 2 },
-            { name: "Bạt trải sàn", quantity: 1 },
-          ],
-          rating: 4.9,
-          reviewCount: 45,
-        },
-        {
-          id: "2",
-          name: "Combo Leo Núi Solo",
-          description: "Thiết bị cơ bản cho người leo núi 1 mình",
-          pricePerHour: 45000,
-          images: [
-            "https://images.unsplash.com/photo-1574216459004-2362b88cb5f0?w=500",
-          ],
-          deviceCount: 5,
-          devices: [
-            { name: "Balo leo núi 50L", quantity: 1 },
-            { name: "Túi ngủ", quantity: 1 },
-            { name: "Đèn pin đội đầu", quantity: 1 },
-            { name: "Bình nước giữ nhiệt", quantity: 1 },
-            { name: "Áo mưa", quantity: 1 },
-          ],
-          rating: 4.8,
-          reviewCount: 32,
-        },
-        {
-          id: "3",
-          name: "Combo Picnic Nhóm Bạn",
-          description: "Bộ thiết bị cho buổi picnic 6-8 người",
-          pricePerHour: 60000,
-          images: [
-            "https://images.unsplash.com/photo-1758618851341-35cfd04b5406?w=500",
-          ],
-          deviceCount: 6,
-          devices: [
-            { name: "Bạt trải picnic lớn", quantity: 1 },
-            { name: "Bộ dụng cụ nấu ăn", quantity: 1 },
-            { name: "Bếp gas mini", quantity: 2 },
-            { name: "Loa bluetooth", quantity: 1 },
-            { name: "Võng xếp", quantity: 2 },
-            { name: "Ô dù che nắng", quantity: 1 },
-          ],
-          rating: 4.7,
-          reviewCount: 28,
-        },
-        {
-          id: "4",
-          name: "Combo Du Lịch Phượt",
-          description: "Bộ thiết bị cho chuyến phượt đường dài",
-          pricePerHour: 70000,
-          images: [
-            "https://images.unsplash.com/photo-1478131143081-80f7f84ca84d?w=500",
-          ],
-          deviceCount: 8,
-          devices: [
-            { name: "Balo leo núi 50L", quantity: 1 },
-            { name: "Túi ngủ", quantity: 1 },
-            { name: "Lều 1 người", quantity: 1 },
-            { name: "Bếp gas mini", quantity: 1 },
-            { name: "Đèn pin", quantity: 1 },
-            { name: "Bình nước", quantity: 2 },
-            { name: "Áo mưa", quantity: 1 },
-            { name: "Bộ sơ cứu", quantity: 1 },
-          ],
-          rating: 4.9,
-          reviewCount: 51,
-        },
-        {
-          id: "5",
-          name: "Combo Chụp Ảnh Du Lịch",
-          description: "Bộ thiết bị cho nhiếp ảnh gia du lịch",
-          pricePerHour: 120000,
-          images: [
-            "https://images.unsplash.com/photo-1606318834502-c3127255246c?w=500",
-          ],
-          deviceCount: 5,
-          devices: [
-            { name: "Máy ảnh GoPro Hero", quantity: 1 },
-            { name: "Gimbal ổn định", quantity: 1 },
-            { name: "Ống nhòm", quantity: 1 },
-            { name: "Pin dự phòng", quantity: 2 },
-            { name: "Thẻ nhớ 128GB", quantity: 2 },
-          ],
-          rating: 5.0,
-          reviewCount: 38,
-        },
-        {
-          id: "6",
-          name: "Combo Cắm Trại Cặp Đôi",
-          description: "Bộ thiết bị lãng mạn cho cặp đôi",
-          pricePerHour: 55000,
-          images: [
-            "https://images.unsplash.com/photo-1504754524776-8f4f37790ca0?w=500",
-          ],
-          deviceCount: 6,
-          devices: [
-            { name: "Lều 2 người", quantity: 1 },
-            { name: "Túi ngủ đôi", quantity: 1 },
-            { name: "Đèn trang trí", quantity: 1 },
-            { name: "Bộ nấu ăn mini", quantity: 1 },
-            { name: "Võng đôi", quantity: 1 },
-            { name: "Loa bluetooth", quantity: 1 },
-          ],
-          rating: 4.8,
-          reviewCount: 42,
-        },
-        {
-          id: "7",
-          name: "Combo Du Lịch Biển",
-          description: "Bộ thiết bị cho chuyến du lịch biển",
-          pricePerHour: 65000,
-          images: [
-            "https://images.unsplash.com/photo-1530870110042-98b2cb110834?w=500",
-          ],
-          deviceCount: 7,
-          devices: [
-            { name: "Phao bơi", quantity: 2 },
-            { name: "Kính lặn", quantity: 2 },
-            { name: "Ô dù che nắng", quantity: 1 },
-            { name: "Túi chống nước", quantity: 2 },
-            { name: "Kem chống nắng", quantity: 2 },
-            { name: "Ghế xếp bãi biển", quantity: 2 },
-            { name: "Bình giữ nhiệt", quantity: 2 },
-          ],
-          rating: 4.7,
-          reviewCount: 35,
-        },
-        {
-          id: "8",
-          name: "Combo Trekking Chuyên Nghiệp",
-          description: "Bộ thiết bị cao cấp cho người yêu trekking",
-          pricePerHour: 95000,
-          images: [
-            "https://images.unsplash.com/photo-1622260614153-03223fb72052?w=500",
-          ],
-          deviceCount: 9,
-          devices: [
-            { name: "Balo leo núi 70L", quantity: 1 },
-            { name: "Lều chống bão", quantity: 1 },
-            { name: "Túi ngủ -10°C", quantity: 1 },
-            { name: "Gậy trekking", quantity: 2 },
-            { name: "Đèn pin siêu sáng", quantity: 1 },
-            { name: "GPS cầm tay", quantity: 1 },
-            { name: "Bộ sơ cứu nâng cao", quantity: 1 },
-            { name: "Bếp gas chuyên dụng", quantity: 1 },
-            { name: "Bình lọc nước", quantity: 1 },
-          ],
-          rating: 5.0,
-          reviewCount: 27,
-        },
-      ];
+      const params = new URLSearchParams({
+        limit: itemsPerPage.toString(),
+        page: currentPage.toString(),
+      });
 
-      setCombos(mockCombos);
-      setTotalPages(Math.ceil(mockCombos.length / itemsPerPage));
+      const response = await fetch(
+        `${import.meta.env.VITE_API_BASE_URL}/combo?${params.toString()}`,
+        {
+          credentials: "include",
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch combos (${response.status})`);
+      }
+
+      const payload = await response.json();
+      const combosData = payload?.data?.combos ?? [];
+
+      const normalized: Combo[] = combosData.map((combo: any) => ({
+        id: combo.id,
+        name: combo.name,
+        description: combo.description,
+        pricePerHour: Number(combo.price) || 0,
+        images: Array.isArray(combo.images) ? combo.images : [],
+        deviceCount: Array.isArray(combo.devices) ? combo.devices.length : 0,
+        devices: Array.isArray(combo.devices)
+          ? combo.devices.map((device: any) => ({
+              name: device.name || "",
+              quantity: device.quantity || 1,
+            }))
+          : [],
+        rating: combo.rating ?? 4.8,
+        reviewCount: combo.reviewCount ?? 0,
+      }));
+
+      setCombos(normalized);
+      setTotalPages(Number(payload?.data?.totalPages) || 1);
     } catch (error) {
       console.error("Error fetching combos:", error);
+      setCombos([]);
+      setTotalPages(1);
     } finally {
       setLoading(false);
     }

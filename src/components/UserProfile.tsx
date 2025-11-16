@@ -21,6 +21,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from './
 import { toast } from 'sonner';
 import { uploadAvatarImage, uploadLicenseImages } from '../utils/media-upload';
 import { connectPaymentSocket } from '../utils/ws-client';
+import { formatVNTime } from '../utils/timezone';
 
 // License class enum
 export const LicenseClassEnum = {
@@ -823,6 +824,31 @@ interface BookingSummary {
   endTime?: string;
   pickupAddress?: string;
   totalAmount?: number;
+  checkCompletion?: CheckCompletion;
+}
+
+interface RefundData {
+  id: string;
+  userId: string;
+  bookingId: string;
+  principal: number;
+  amount: number;
+  penaltyAmount: number;
+  damageAmount: number;
+  overtimeAmount: number;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  vehicleName?: string;
+}
+
+interface ComplaintData {
+  id: string;
+  userId: string;
+  title: string;
+  status: 'OPEN' | 'IN_PROGRESS' | 'CLOSED';
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface BookingDetailData extends BookingSummary {
@@ -865,6 +891,8 @@ interface CheckRecord {
   damageImages?: string[];
   createdAt?: string;
   staffName?: string;
+  verified?: boolean;
+  verifiedAt?: string;
 }
 
 interface ExtensionRecord {
@@ -885,7 +913,8 @@ const BOOKING_STATUS_FILTERS = [
   { label: 'Chờ xử lý', value: 'PENDING_PROCESS' },
   { label: 'Đang thuê', value: 'ONGOING' },
   { label: 'Hoàn tất', value: 'COMPLETED' },
-  { label: 'Đã hủy', value: 'CANCELLED_GROUP' }
+  { label: 'Đã hủy', value: 'CANCELLED_GROUP' },
+  { label: 'Hoàn tiền', value: 'REFUNDED' }
 ] as const;
 
 const BOOKING_STATUS_STYLES: Record<string, { label: string; className: string }> = {
@@ -909,10 +938,12 @@ const BOOKING_STATUS_STYLES: Record<string, { label: string; className: string }
 
   // Trạng thái kết thúc
   COMPLETED: { label: 'Hoàn tất', className: 'bg-emerald-100 text-emerald-700' },
+  PENDING_REFUND: { label: 'Chờ duyệt', className: 'bg-amber-100 text-amber-700' },
   CANCELLED: { label: 'Đã hủy', className: 'bg-rose-100 text-rose-700' },
   REJECTED: { label: 'Bị từ chối', className: 'bg-rose-100 text-rose-700' },
   EXPIRED: { label: 'Hết hạn thanh toán', className: 'bg-gray-100 text-gray-700' },
   OVERDUE: { label: 'Quá hạn trả xe', className: 'bg-red-100 text-red-700' },
+  REFUNDED: { label: 'Đã hoàn tiền', className: 'bg-violet-100 text-violet-700' },
 
   // Trạng thái gia hạn
   EXTENSION_REQUESTED: { label: 'Yêu cầu gia hạn', className: 'bg-amber-100 text-amber-700' },
@@ -971,8 +1002,14 @@ function HistoryTab() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<(typeof BOOKING_STATUS_FILTERS)[number]['value']>('ALL');
   const { bookings, loading, error, totalPages, refetch } = useBookingList(page, BOOKING_LIST_LIMIT);
+  const { refunds, loading: refundsLoading, error: refundsError, totalPages: refundsTotalPages, refetch: refetchRefunds } = useRefundList(page, BOOKING_LIST_LIMIT);
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
   const isDesktop = useMediaQuery('(min-width: 1024px)');
+
+  // Khi statusFilter thay đổi sang/khỏi REFUNDED, reset page về 1
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter]);
 
   const filteredBookings = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
@@ -994,15 +1031,22 @@ function HistoryTab() {
         return matchesKeyword && isPendingProcess;
       }
 
-      // Tab 3: Đang thuê - ONGOING (with check-in)
+      // Tab 3: Đang thuê - ONGOING hoặc PENDING_REFUND
+      // Hiển thị booking đang thuê (ONGOING) hoặc đã checkout nhưng chờ admin duyệt (PENDING_REFUND)
       if (statusFilter === 'ONGOING') {
         const isOngoing = normalizedStatus === 'ONGOING';
-        return matchesKeyword && isOngoing;
+        const isPendingRefund = normalizedStatus === 'PENDING_REFUND';
+
+        // Hiển thị nếu status là ONGOING hoặc PENDING_REFUND
+        return matchesKeyword && (isOngoing || isPendingRefund);
       }
 
       // Tab 4: Hoàn tất - COMPLETED
+      // Chỉ hiển thị khi backend trả về status COMPLETED (admin đã duyệt xong)
       if (statusFilter === 'COMPLETED') {
         const isCompleted = normalizedStatus === 'COMPLETED';
+
+        // Chỉ hiển thị khi status là COMPLETED
         return matchesKeyword && isCompleted;
       }
 
@@ -1010,6 +1054,12 @@ function HistoryTab() {
       if (statusFilter === 'CANCELLED_GROUP') {
         const isCancelled = ['CANCELLED', 'EXPIRED', 'OVERDUE'].includes(normalizedStatus);
         return matchesKeyword && isCancelled;
+      }
+
+      // Tab 6: Hoàn tiền - REFUNDED
+      if (statusFilter === 'REFUNDED') {
+        const isRefunded = normalizedStatus === 'REFUNDED';
+        return matchesKeyword && isRefunded;
       }
 
       return matchesKeyword;
@@ -1045,6 +1095,13 @@ function HistoryTab() {
     });
   }, [filteredBookings]);
 
+  // Determine which data to display based on filter
+  const isRefundTab = statusFilter === 'REFUNDED';
+  const currentError = isRefundTab ? refundsError : error;
+  const currentLoading = isRefundTab ? refundsLoading : loading;
+  const currentTotalPages = isRefundTab ? refundsTotalPages : adjustedTotalPages;
+  const currentRefetch = isRefundTab ? refetchRefunds : refetch;
+
   return (
     <div className="space-y-5">
       <Card>
@@ -1055,13 +1112,15 @@ function HistoryTab() {
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
-          {error && (
+          {currentError && (
             <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
               <AlertCircle className="h-4 w-4 mt-0.5" />
               <div>
-                <p className="font-semibold">Không thể tải danh sách booking</p>
-                <p>{error}</p>
-                <Button variant="outline" size="sm" className="mt-2" onClick={refetch}>
+                <p className="font-semibold">
+                  {isRefundTab ? 'Không thể tải danh sách hoàn tiền' : 'Không thể tải danh sách booking'}
+                </p>
+                <p>{currentError}</p>
+                <Button variant="outline" size="sm" className="mt-2" onClick={currentRefetch}>
                   Thử lại
                 </Button>
               </div>
@@ -1070,7 +1129,7 @@ function HistoryTab() {
 
           <div className="flex flex-col gap-3">
             <Input
-              placeholder="Tìm tên xe, mã booking..."
+              placeholder={isRefundTab ? "Tìm kiếm hoàn tiền..." : "Tìm tên xe, mã booking..."}
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
               className="sm:max-w-sm"
@@ -1095,18 +1154,28 @@ function HistoryTab() {
         </CardContent>
       </Card>
 
-      <BookingListPanel
-        bookings={filteredBookings}
-        loading={loading}
-        page={page}
-        totalPages={adjustedTotalPages}
-        onPageChange={setPage}
-        selectedId={selectedBookingId}
-        onSelect={(id) => setSelectedBookingId(id)}
-        renderDetail={(bookingId) => (
-          <BookingDetailWorkspace bookingId={bookingId} onBookingUpdated={refetch} inline />
-        )}
-      />
+      {isRefundTab ? (
+        <RefundListPanel
+          refunds={refunds}
+          loading={currentLoading}
+          page={page}
+          totalPages={currentTotalPages}
+          onPageChange={setPage}
+        />
+      ) : (
+        <BookingListPanel
+          bookings={filteredBookings}
+          loading={loading}
+          page={page}
+          totalPages={adjustedTotalPages}
+          onPageChange={setPage}
+          selectedId={selectedBookingId}
+          onSelect={(id) => setSelectedBookingId(id)}
+          renderDetail={(bookingId) => (
+            <BookingDetailWorkspace bookingId={bookingId} onBookingUpdated={refetch} inline />
+          )}
+        />
+      )}
     </div>
   );
 }
@@ -1169,6 +1238,114 @@ function BookingListPanel({
                 {renderDetail && isActive && (
                   <div className="bg-gray-50 px-4 pb-4">{renderDetail(booking.id)}</div>
                 )}
+              </div>
+            );
+          })
+        )}
+      </div>
+      <div className="border-t px-4 py-3">
+        <PaginationControls page={page} totalPages={totalPages} onPageChange={onPageChange} />
+      </div>
+    </Card>
+  );
+}
+
+function RefundListPanel({
+  refunds,
+  loading,
+  page,
+  totalPages,
+  onPageChange
+}: {
+  refunds: RefundData[];
+  loading: boolean;
+  page: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+}) {
+  const REFUND_STATUS_STYLES: Record<string, { label: string; className: string }> = {
+    PENDING: { label: 'Chờ duyệt', className: 'bg-amber-100 text-amber-700' },
+    APPROVED: { label: 'Đã duyệt', className: 'bg-emerald-100 text-emerald-700' },
+    REJECTED: { label: 'Từ chối', className: 'bg-rose-100 text-rose-700' },
+    COMPLETED: { label: 'Đã hoàn tiền', className: 'bg-violet-100 text-violet-700' }
+  };
+
+  return (
+    <Card className="flex h-full flex-col">
+      <div className="flex items-center justify-between border-b px-4 py-3">
+        <div>
+          <p className="text-sm font-semibold text-gray-900">Danh sách hoàn tiền</p>
+          <p className="text-xs text-gray-500">
+            Trang {page}/{Math.max(totalPages, 1)}
+          </p>
+        </div>
+        <Badge variant="secondary">{refunds.length}</Badge>
+      </div>
+      <div className="flex-1 overflow-y-auto max-h-[32rem] pr-1">
+        {loading ? (
+          <div className="flex items-center justify-center py-10 text-sm text-gray-500">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Đang tải danh sách hoàn tiền...
+          </div>
+        ) : refunds.length === 0 ? (
+          <div className="px-4 py-6 text-center text-sm text-gray-500">
+            Không tìm thấy yêu cầu hoàn tiền.
+          </div>
+        ) : (
+          refunds.map((refund) => {
+            const statusMeta = REFUND_STATUS_STYLES[refund.status] || {
+              label: refund.status,
+              className: 'bg-gray-100 text-gray-600'
+            };
+
+            return (
+              <div key={refund.id} className="border-b last:border-b-0 p-4 hover:bg-gray-50 transition">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-semibold text-gray-900">
+                        Mã booking: {refund.bookingId.slice(0, 8)}...
+                      </p>
+                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${statusMeta.className}`}>
+                        {statusMeta.label}
+                      </span>
+                    </div>
+
+                    {refund.vehicleName && (
+                      <p className="text-sm font-medium text-gray-700">
+                        🚗 {refund.vehicleName}
+                      </p>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
+                      <div>
+                        <span className="font-medium">Tiền cọc:</span> {formatCurrency(refund.principal)}
+                      </div>
+                      <div>
+                        <span className="font-medium">Số tiền hoàn:</span> {formatCurrency(refund.amount)}
+                      </div>
+                      {refund.penaltyAmount > 0 && (
+                        <div>
+                          <span className="font-medium">Phí phạt:</span> {formatCurrency(refund.penaltyAmount)}
+                        </div>
+                      )}
+                      {refund.damageAmount > 0 && (
+                        <div>
+                          <span className="font-medium">Tiền hư hỏng:</span> {formatCurrency(refund.damageAmount)}
+                        </div>
+                      )}
+                      {refund.overtimeAmount > 0 && (
+                        <div>
+                          <span className="font-medium">Phí quá giờ:</span> {formatCurrency(refund.overtimeAmount)}
+                        </div>
+                      )}
+                    </div>
+
+                    <p className="text-xs text-gray-500">
+                      Tạo lúc: {formatVNTime(refund.createdAt)}
+                    </p>
+                  </div>
+                </div>
               </div>
             );
           })
@@ -2771,6 +2948,132 @@ function useBookingList(page: number, limit: number) {
   };
 }
 
+function useRefundList(page: number, limit: number) {
+  const apiBase = import.meta.env.VITE_API_BASE_URL;
+  const [refunds, setRefunds] = useState<RefundData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [totalPages, setTotalPages] = useState(1);
+
+  const fetchRefunds = useCallback(
+    async (options?: { signal?: AbortSignal }) => {
+      if (!apiBase) {
+        setError('Chưa cấu hình API');
+        setLoading(false);
+        setRefunds([]);
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetch(`${apiBase}/refund?page=${page}&limit=${limit}`, {
+          credentials: 'include',
+          signal: options?.signal
+        });
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({}));
+          throw new Error(err.message || `HTTP ${response.status}`);
+        }
+        const json = await response.json();
+        const payload = json.data ?? json;
+        const rawList = payload.refunds ?? payload.items ?? payload.data ?? payload.results ?? [];
+        const list = Array.isArray(rawList) ? rawList : [];
+        setRefunds(list);
+        const totalItems = toNumber(payload.totalItems ?? payload.total) ?? list.length;
+        const computedPages = payload.totalPages || (totalItems ? Math.max(1, Math.ceil(totalItems / limit)) : 1);
+        setTotalPages(computedPages);
+      } catch (err) {
+        if (options?.signal?.aborted) return;
+        setError(err instanceof Error ? err.message : 'Không thể tải danh sách hoàn tiền');
+        setRefunds([]);
+      } finally {
+        if (!options?.signal?.aborted) {
+          setLoading(false);
+        }
+      }
+    },
+    [apiBase, page, limit]
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchRefunds({ signal: controller.signal });
+    return () => controller.abort();
+  }, [fetchRefunds]);
+
+  return {
+    refunds,
+    loading,
+    error,
+    totalPages,
+    refetch: () => fetchRefunds()
+  };
+}
+
+function useComplaintList(page: number, limit: number) {
+  const apiBase = import.meta.env.VITE_API_BASE_URL;
+  const [complaints, setComplaints] = useState<ComplaintData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [totalPages, setTotalPages] = useState(1);
+
+  const fetchComplaints = useCallback(
+    async (options?: { signal?: AbortSignal }) => {
+      if (!apiBase) {
+        setError('Chưa cấu hình API');
+        setLoading(false);
+        setComplaints([]);
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetch(`${apiBase}/complaint?page=${page}&limit=${limit}`, {
+          credentials: 'include',
+          signal: options?.signal
+        });
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({}));
+          throw new Error(err.message || `HTTP ${response.status}`);
+        }
+        const json = await response.json();
+        const payload = json.data ?? json;
+        const rawList = payload.complaints ?? payload.items ?? payload.data ?? payload.results ?? [];
+        const list = Array.isArray(rawList) ? rawList : [];
+        setComplaints(list);
+        const totalItems = toNumber(payload.totalItems ?? payload.total) ?? list.length;
+        const computedPages = payload.totalPages || (totalItems ? Math.max(1, Math.ceil(totalItems / limit)) : 1);
+        setTotalPages(computedPages);
+      } catch (err) {
+        if (options?.signal?.aborted) return;
+        setError(err instanceof Error ? err.message : 'Không thể tải danh sách khiếu nại');
+        setComplaints([]);
+      } finally {
+        if (!options?.signal?.aborted) {
+          setLoading(false);
+        }
+      }
+    },
+    [apiBase, page, limit]
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchComplaints({ signal: controller.signal });
+    return () => controller.abort();
+  }, [fetchComplaints]);
+
+  return {
+    complaints,
+    loading,
+    error,
+    totalPages,
+    refetch: () => fetchComplaints()
+  };
+}
+
 function useBookingDetail(bookingId?: string | null) {
   const apiBase = import.meta.env.VITE_API_BASE_URL;
   const [booking, setBooking] = useState<BookingDetailData | null>(null);
@@ -3204,6 +3507,18 @@ function mapBookingSummary(entry: any): BookingSummary {
   const status = (entry.status ?? entry.bookingStatus ?? entry.state ?? '').toString().toUpperCase();
   const startTime = entry.startTime ?? entry.start_time ?? entry.start ?? entry.startDate ?? entry.start_date;
   const endTime = entry.endTime ?? entry.end_time ?? entry.end ?? entry.endDate ?? entry.end_date;
+
+  // Map checkCompletion if available
+  let checkCompletion: CheckCompletion | undefined;
+  if (entry.checkCompletion || entry.check_completion || entry.checkIn || entry.checkOut) {
+    const checkInData = entry.checkCompletion?.checkIn ?? entry.check_completion?.check_in ?? entry.checkIn ?? entry.check_in;
+    const checkOutData = entry.checkCompletion?.checkOut ?? entry.check_completion?.check_out ?? entry.checkOut ?? entry.check_out;
+    checkCompletion = {
+      checkIn: checkInData ? mapCheckRecord(checkInData, 'CHECK_IN') : undefined,
+      checkOut: checkOutData ? mapCheckRecord(checkOutData, 'CHECK_OUT') : undefined
+    };
+  }
+
   return {
     id: rawId ? String(rawId) : String(fallbackId),
     code: entry.code ?? entry.bookingCode ?? entry.reference ?? entry.booking_code,
@@ -3214,7 +3529,8 @@ function mapBookingSummary(entry: any): BookingSummary {
     startTime: toDateISOString(startTime),
     endTime: toDateISOString(endTime),
     pickupAddress: entry.pickupAddress ?? entry.pickup_address ?? entry.pickupLocation,
-    totalAmount: toNumber(entry.totalAmount ?? entry.pricing?.total ?? entry.total_price)
+    totalAmount: toNumber(entry.totalAmount ?? entry.pricing?.total ?? entry.total_price),
+    checkCompletion
   };
 }
 
@@ -3267,7 +3583,9 @@ function mapCheckRecord(entry: any, fallbackType: CheckType): CheckRecord {
     damageNotes: entry?.damageNotes ?? entry?.issues ?? entry?.notes,
     damageImages: toImageArray(entry?.damageImages ?? entry?.damage_photos),
     createdAt: toDateISOString(entry?.createdAt ?? entry?.timestamp),
-    staffName: entry?.staffName ?? entry?.inspector ?? entry?.user?.fullName
+    staffName: entry?.staffName ?? entry?.inspector ?? entry?.user?.fullName,
+    verified: entry?.verified ?? false,
+    verifiedAt: toDateISOString(entry?.verifiedAt ?? entry?.verified_at)
   };
 }
 
@@ -3792,56 +4110,76 @@ function PaymentTab() {
 }
 
 function ComplaintsTab() {
-  const [activeTab, setActiveTab] = useState('open');
+  const LIMIT = 10;
+  const [activeTab, setActiveTab] = useState<'open' | 'closed'>('open');
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [newTitle, setNewTitle] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [page, setPage] = useState(1);
 
-  const openComplaints = [
-    {
-      id: '1',
-      title: 'Xe không sạch sẽ như mô tả',
-      status: 'open',
-      createdAt: '2024-01-20',
-      lastReply: '2024-01-21'
-    },
-    {
-      id: '3',
-      title: 'Xe gặp sự cố kỹ thuật trên đường',
-      status: 'open',
-      createdAt: '2024-01-22',
-      lastReply: '2024-01-22'
-    },
-    {
-      id: '4',
-      title: 'Chủ xe không giao xe đúng giờ',
-      status: 'open',
-      createdAt: '2024-01-23',
-      lastReply: '2024-01-23'
-    }
-  ];
+  const { complaints, loading, error, totalPages, refetch } = useComplaintList(page, LIMIT);
+  const apiBase = import.meta.env.VITE_API_BASE_URL;
 
-  const closedComplaints = [
-    {
-      id: '2',
-      title: 'Vấn đề về thanh toán',
-      status: 'closed',
-      createdAt: '2024-01-15',
-      resolvedAt: '2024-01-18'
-    },
-    {
-      id: '5',
-      title: 'Xe thiếu xăng khi giao',
-      status: 'closed',
-      createdAt: '2024-01-10',
-      resolvedAt: '2024-01-12'
-    },
-    {
-      id: '6',
-      title: 'Phí phát sinh không thông báo trước',
-      status: 'closed',
-      createdAt: '2024-01-05',
-      resolvedAt: '2024-01-08'
+  // Filter complaints based on active tab
+  const filteredComplaints = useMemo(() => {
+    if (activeTab === 'open') {
+      return complaints.filter(c => c.status === 'OPEN' || c.status === 'IN_PROGRESS');
+    } else {
+      return complaints.filter(c => c.status === 'CLOSED');
     }
-  ];
+  }, [complaints, activeTab]);
+
+  // Reset page when changing tabs
+  useEffect(() => {
+    setPage(1);
+  }, [activeTab]);
+
+  const handleCreateComplaint = async () => {
+    if (!newTitle.trim()) {
+      toast.error('Vui lòng nhập tiêu đề khiếu nại');
+      return;
+    }
+
+    setCreating(true);
+    try {
+      const response = await fetch(`${apiBase}/complaint`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({ title: newTitle.trim() })
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || `HTTP ${response.status}`);
+      }
+
+      toast.success('Tạo khiếu nại thành công!');
+      setNewTitle('');
+      setShowCreateForm(false);
+      refetch();
+    } catch (err) {
+      console.error('Create complaint error:', err);
+      toast.error(err instanceof Error ? err.message : 'Không thể tạo khiếu nại');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'OPEN':
+        return <Badge className="bg-emerald-100 text-emerald-700">Đang mở</Badge>;
+      case 'IN_PROGRESS':
+        return <Badge className="bg-amber-100 text-amber-700">Đang xử lý</Badge>;
+      case 'CLOSED':
+        return <Badge variant="secondary">Đã đóng</Badge>;
+      default:
+        return <Badge variant="outline">{status}</Badge>;
+    }
+  };
 
   return (
     <Card>
@@ -3855,66 +4193,75 @@ function ComplaintsTab() {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
+        {error && (
+          <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 mb-4">
+            <AlertCircle className="h-4 w-4 mt-0.5" />
+            <div>
+              <p className="font-semibold">Không thể tải danh sách khiếu nại</p>
+              <p>{error}</p>
+              <Button variant="outline" size="sm" className="mt-2" onClick={refetch}>
+                Thử lại
+              </Button>
+            </div>
+          </div>
+        )}
+
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'open' | 'closed')}>
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="open">Đang mở</TabsTrigger>
             <TabsTrigger value="closed">Đã đóng</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="open" className="mt-6">
-            <div className="space-y-4">
-              {openComplaints.map((complaint) => (
-                <Card key={complaint.id}>
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="font-medium">{complaint.title}</h3>
-                        <p className="text-sm text-gray-600">
-                          Tạo: {complaint.createdAt} | Phản hồi cuối: {complaint.lastReply}
-                        </p>
+          <TabsContent value={activeTab} className="mt-6">
+            {loading ? (
+              <div className="flex items-center justify-center py-10 text-sm text-gray-500">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Đang tải danh sách khiếu nại...
+              </div>
+            ) : filteredComplaints.length === 0 ? (
+              <div className="px-4 py-6 text-center text-sm text-gray-500">
+                Không có khiếu nại nào.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {filteredComplaints.map((complaint) => (
+                  <Card key={complaint.id}>
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <h3 className="font-medium">{complaint.title}</h3>
+                          <p className="text-sm text-gray-600">
+                            Tạo: {formatVNTime(complaint.createdAt)}
+                            {complaint.updatedAt && complaint.updatedAt !== complaint.createdAt && (
+                              <> | Cập nhật: {formatVNTime(complaint.updatedAt)}</>
+                            )}
+                          </p>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          {getStatusBadge(complaint.status)}
+                          <Link to={`/complaint/${complaint.id}`} state={{ complaint }}>
+                            <Button size="sm">
+                              <MessageCircle className="h-4 w-4 mr-1" />
+                              Xem chi tiết
+                            </Button>
+                          </Link>
+                        </div>
                       </div>
-                      <div className="flex items-center space-x-2">
-                        <Badge variant="default">Đang mở</Badge>
-                        <Link to={`/complaint/${complaint.id}`}>
-                          <Button size="sm">
-                            <MessageCircle className="h-4 w-4 mr-1" />
-                            Xem chi tiết
-                          </Button>
-                        </Link>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </TabsContent>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
 
-          <TabsContent value="closed" className="mt-6">
-            <div className="space-y-4">
-              {closedComplaints.map((complaint) => (
-                <Card key={complaint.id}>
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="font-medium">{complaint.title}</h3>
-                        <p className="text-sm text-gray-600">
-                          Tạo: {complaint.createdAt} | Giải quyết: {complaint.resolvedAt}
-                        </p>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Badge variant="secondary">Đã đóng</Badge>
-                        <Link to={`/complaint/${complaint.id}`}>
-                          <Button size="sm" variant="outline">
-                            <Eye className="h-4 w-4 mr-1" />
-                            Xem
-                          </Button>
-                        </Link>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+            {totalPages > 1 && (
+              <div className="mt-4">
+                <PaginationControls
+                  page={page}
+                  totalPages={totalPages}
+                  onPageChange={setPage}
+                />
+              </div>
+            )}
           </TabsContent>
         </Tabs>
 
@@ -3926,31 +4273,30 @@ function ComplaintsTab() {
             <div className="space-y-4">
               <div>
                 <Label htmlFor="complaintTitle">Tiêu đề</Label>
-                <Input id="complaintTitle" placeholder="Nhập tiêu đề khiếu nại" className="mt-1" />
-              </div>
-              
-              <div>
-                <Label htmlFor="complaintDescription">Mô tả chi tiết</Label>
-                <Textarea
-                  id="complaintDescription"
-                  placeholder="Mô tả vấn đề bạn gặp phải..."
-                  rows={4}
+                <Input
+                  id="complaintTitle"
+                  placeholder="Nhập tiêu đề khiếu nại"
                   className="mt-1"
+                  value={newTitle}
+                  onChange={(e) => setNewTitle(e.target.value)}
+                  disabled={creating}
                 />
               </div>
 
-              <div>
-                <Label>Hình ảnh đính kèm</Label>
-                <div className="mt-2 border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
-                  <Upload className="h-8 w-8 text-gray-400 mx-auto mb-2" />
-                  <p className="text-sm text-gray-600">Tải lên hình ảnh liên quan (tùy chọn)</p>
-                  <Button variant="outline" size="sm" className="mt-2">
-                    Chọn file
-                  </Button>
-                </div>
-              </div>
-
-              <Button className="w-full">Tạo khiếu nại</Button>
+              <Button
+                className="w-full"
+                onClick={handleCreateComplaint}
+                disabled={creating || !newTitle.trim()}
+              >
+                {creating ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Đang tạo...
+                  </>
+                ) : (
+                  'Tạo khiếu nại'
+                )}
+              </Button>
             </div>
           </DialogContent>
         </Dialog>
@@ -4058,4 +4404,3 @@ function PasswordTab() {
     </Card>
   );
 }
-

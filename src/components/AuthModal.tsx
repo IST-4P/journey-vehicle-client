@@ -202,11 +202,10 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
         toast.error(message);
         return;
       }
-
-      // Xử lý nhiều cấu trúc response khác nhau
-      // Có thể là: result.accessToken, result.data.accessToken, result.data.access_token
       let accessToken: string | null = null;
       let refreshToken: string | null = null;
+      let cookieSessionProfile: unknown = null;
+      let resolvedUserPayload: unknown = result.user || result.data || result;
 
       if (result.accessToken) {
         accessToken = result.accessToken;
@@ -224,32 +223,63 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
         refreshToken = result.data.refresh_token;
       }
 
-      // FIX: Nếu API không trả token trong body (cookie-based auth), gọi refresh-token để lấy token
+      // FIX: Nếu API không trả token trong body (cookie-based auth), verify session và lấy user data
       if (!accessToken) {
-        console.log('[AuthModal] No token in response body, trying refresh-token endpoint...');
+        console.log('[AuthModal] No token in response body, waiting for cookie to be set...');
+
+        // Wait a bit to ensure cookies are properly set by the browser
+        await new Promise(resolve => setTimeout(resolve, 200));
+
+        // Try to get user profile directly (this verifies the session cookie is valid)
         try {
-          const refreshResponse = await fetch(`${apiBaseUrl}/auth/refresh-token`, {
-            method: 'POST',
+          console.log('[AuthModal] Fetching user profile to verify session...');
+          const profileResponse = await fetch(`${apiBaseUrl}/user/profile`, {
+            method: 'GET',
             credentials: 'include',
-            headers: {
-              'Content-Type': 'application/json',
-            },
           });
 
-          if (refreshResponse.ok) {
-            const refreshResult = await refreshResponse.json();
-            console.log('[AuthModal] Refresh-token response:', refreshResult);
+          if (profileResponse.ok) {
+            const profileResult = await profileResponse.json();
+            cookieSessionProfile =
+              profileResult?.user ?? profileResult?.data ?? profileResult ?? null;
+            console.log('[AuthModal] Cookie session verified, user:', cookieSessionProfile);
 
-            const tokens = refreshResult?.data ?? refreshResult;
-            accessToken = tokens?.accessToken ?? tokens?.access_token ?? tokens?.token ?? null;
-            refreshToken = tokens?.refreshToken ?? tokens?.refresh_token ?? null;
-
-            console.log('[AuthModal] Extracted tokens - accessToken:', accessToken ? 'exists' : 'null', 'refreshToken:', refreshToken ? 'exists' : 'null');
+            // Session is valid, we can use cookie-based auth
+            resolvedUserPayload = cookieSessionProfile;
           } else {
-            console.error('[AuthModal] Refresh-token failed with status:', refreshResponse.status);
+            console.error('[AuthModal] Profile fetch failed with status:', profileResponse.status);
+            const errorText = await profileResponse.text();
+            console.error('[AuthModal] Profile error body:', errorText);
+
+            // If profile fails, try refresh-token as backup
+            console.log('[AuthModal] Trying refresh-token endpoint as backup...');
+            try {
+              const refreshResponse = await fetch(`${apiBaseUrl}/auth/refresh-token`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+              });
+
+              if (refreshResponse.ok) {
+                const refreshResult = await refreshResponse.json();
+                console.log('[AuthModal] Refresh-token response:', refreshResult);
+
+                const tokens = refreshResult?.data ?? refreshResult;
+                accessToken = tokens?.accessToken ?? tokens?.access_token ?? tokens?.token ?? null;
+                refreshToken = tokens?.refreshToken ?? tokens?.refresh_token ?? null;
+
+                console.log('[AuthModal] Extracted tokens - accessToken:', accessToken ? 'exists' : 'null', 'refreshToken:', refreshToken ? 'exists' : 'null');
+              } else {
+                console.error('[AuthModal] Refresh-token also failed with status:', refreshResponse.status);
+              }
+            } catch (refreshError) {
+              console.error('[AuthModal] Failed to get token from refresh endpoint:', refreshError);
+            }
           }
-        } catch (refreshError) {
-          console.error('[AuthModal] Failed to get token from refresh endpoint:', refreshError);
+        } catch (profileError) {
+          console.error('[AuthModal] Error fetching profile:', profileError);
         }
       }
 
@@ -259,9 +289,9 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
         console.log('[AuthModal] Access token saved to localStorage');
         // FIX: Dùng helper function để dispatch cả 2 events
         dispatchTokenChangeEvent(accessToken);
-      } else {
+      } else if (cookieSessionProfile) {
         // FIX: Nếu API dùng pure cookie-based auth, dispatch event với flag đặc biệt
-        console.log('[AuthModal] Pure cookie-based auth detected, dispatching cookieAuth event');
+        console.log('[AuthModal] Cookie-based auth verified, dispatching cookieAuth event');
         localStorage.setItem('cookieAuth', 'true');
 
         // Dispatch cookieAuth storage event riêng
@@ -275,6 +305,11 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
 
         // Dispatch CustomEvent để ChatWidget biết user đã authenticated
         dispatchTokenChangeEvent('COOKIE_AUTH'); // Special marker
+
+        resolvedUserPayload = cookieSessionProfile;
+      } else {
+        toast.error('Không thể xác thực phiên đăng nhập. Vui lòng thử lại.');
+        return;
       }
 
       if (refreshToken) {
@@ -283,7 +318,7 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
       }
 
       toast.success('Đăng nhập thành công!');
-      onSuccess(result.data || result.user || result); // Fallback nếu không có result.user
+      onSuccess(resolvedUserPayload); // Fallback nếu không có result.user
       onClose(); // Đóng modal sau khi login thành công
     } catch (error) {
       console.error('Login error:', error);

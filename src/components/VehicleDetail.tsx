@@ -14,6 +14,7 @@ import { Input } from './ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { toast } from 'sonner';
+import { formatVNDate } from '../utils/timezone';
 
 const formatPrice = (price: number) => {
   return new Intl.NumberFormat('vi-VN', {
@@ -74,6 +75,32 @@ interface Vehicle {
   updatedAt: string;
 }
 
+interface Review {
+  id: string;
+  bookingId: string;
+  vehicleId: string;
+  userId: string;
+  rating: number;
+  title: string;
+  type: number;
+  content: string;
+  images: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ReviewsResponse {
+  data: {
+    reviews: Review[];
+    page: number;
+    limit: number;
+    totalItems: number;
+    totalPages: number;
+  };
+  message: string;
+  statusCode: number;
+}
+
 export function VehicleDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -105,6 +132,8 @@ export function VehicleDetail() {
     totalAmount: number;
   } | null>(null);
   const [priceLoading, setPriceLoading] = useState(false);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
 
   // Helper function to check if vehicle is available
   const isVehicleAvailable = (status: string | undefined) => {
@@ -164,7 +193,41 @@ export function VehicleDetail() {
       }
     };
 
+    const fetchReviews = async () => {
+      if (!id) return;
+
+      setReviewsLoading(true);
+      try {
+        const response = await fetch(
+          `${import.meta.env.VITE_API_BASE_URL}/review/vehicle/${id}`,
+          {
+            credentials: 'include'
+          }
+        );
+
+        console.log('[VehicleDetail] Reviews response status:', response.status);
+
+        if (response.ok) {
+          const payload: ReviewsResponse = await response.json();
+          console.log('[VehicleDetail] Reviews payload:', payload);
+
+          if (payload.data && Array.isArray(payload.data.reviews)) {
+            setReviews(payload.data.reviews);
+          }
+        } else {
+          console.error('Failed to fetch reviews:', response.status);
+          setReviews([]);
+        }
+      } catch (error) {
+        console.error('Error fetching reviews:', error);
+        setReviews([]);
+      } finally {
+        setReviewsLoading(false);
+      }
+    };
+
     fetchVehicleDetailCallback();
+    fetchReviews();
     
     // Get rental duration from URL params
     const startDate = searchParams.get('startDate');
@@ -195,6 +258,12 @@ export function VehicleDetail() {
 
   const rentalHours = rentalDuration?.hours ?? selectedHours;
   const durationLabel = formatDurationLabel(rentalHours);
+
+  // Calculate actual rating from reviews
+  const actualRating = reviews.length > 0
+    ? (reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length).toFixed(1)
+    : vehicle?.averageRating || 0;
+  const reviewCount = reviews.length;
 
   // Fetch price breakdown every time rental duration or manual hours change
   useEffect(() => {
@@ -512,8 +581,8 @@ export function VehicleDetail() {
                 <div className="flex items-center">
                   <div className="flex items-center mr-4">
                     <Star className="h-5 w-5 text-yellow-400 fill-current mr-1" />
-                    <span className="font-medium">{vehicle.averageRating || 0}</span>
-                    <span className="text-gray-600 ml-1">({vehicle.totalTrips} chuyến)</span>
+                    <span className="font-medium">{actualRating}</span>
+                    <span className="text-gray-600 ml-1">({reviewCount} đánh giá)</span>
                   </div>
                   <Badge variant={isVehicleAvailable(vehicle.status) ? "default" : "secondary"}>
                     {getStatusText(vehicle.status)}
@@ -559,7 +628,9 @@ export function VehicleDetail() {
           <Tabs defaultValue="amenities">
             <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="amenities">Tiện nghi</TabsTrigger>
-              <TabsTrigger value="reviews">Đánh giá</TabsTrigger>
+              <TabsTrigger value="reviews">
+                Đánh giá ({reviewsLoading ? '...' : reviews.length})
+              </TabsTrigger>
               <TabsTrigger value="policies">Chính sách</TabsTrigger>
               <TabsTrigger value="location">Vị trí</TabsTrigger>
             </TabsList>
@@ -584,18 +655,84 @@ export function VehicleDetail() {
 
             <TabsContent value="reviews" className="mt-6">
               <div className="space-y-4">
-                <div className="text-center py-8">
-                  <div className="flex items-center justify-center mb-4">
-                    <Star className="h-12 w-12 text-yellow-400 fill-current" />
+                {reviewsLoading ? (
+                  <div className="text-center py-8">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+                    <p className="text-sm text-gray-500 mt-2">Đang tải đánh giá...</p>
                   </div>
-                  <h3 className="text-lg font-medium mb-2">Đánh giá</h3>
-                  <p className="text-gray-600 mb-4">
-                    Xe này có {vehicle.averageRating || 0}/5 sao với {vehicle.totalTrips} chuyến đã hoàn thành
-                  </p>
-                  <p className="text-sm text-gray-500">
-                    Đánh giá chi tiết sẽ được hiển thị sau khi có khách hàng thuê xe
-                  </p>
-                </div>
+                ) : reviews.length === 0 ? (
+                  <div className="text-center py-8">
+                    <div className="flex items-center justify-center mb-4">
+                      <Star className="h-12 w-12 text-yellow-400 fill-current" />
+                    </div>
+                    <h3 className="text-lg font-medium mb-2">Đánh giá</h3>
+                    <p className="text-gray-600 mb-4">
+                      Xe này có {actualRating}/5 sao
+                    </p>
+                    <p className="text-sm text-gray-500">
+                      Chưa có đánh giá chi tiết
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-medium">
+                        Đánh giá từ khách hàng ({reviewCount})
+                      </h3>
+                      <div className="flex items-center">
+                        <Star className="h-5 w-5 text-yellow-400 fill-current mr-1" />
+                        <span className="font-medium">{actualRating}/5</span>
+                      </div>
+                    </div>
+                    {reviews.map((review) => (
+                      <div
+                        key={review.id}
+                        className="border-b pb-4 last:border-0"
+                      >
+                        <div className="mb-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="font-semibold text-gray-900">{review.title}</h4>
+                            <span className="text-sm text-gray-500">
+                              {formatVNDate(review.createdAt)}
+                            </span>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <div className="flex">
+                              {[...Array(5)].map((_, i) => (
+                                <Star
+                                  key={i}
+                                  className={`h-4 w-4 ${
+                                    i < review.rating
+                                      ? "fill-yellow-400 text-yellow-400"
+                                      : "text-gray-300"
+                                  }`}
+                                />
+                              ))}
+                            </div>
+                            <span className="text-sm font-medium text-gray-700">
+                              {review.rating}/5
+                            </span>
+                          </div>
+                        </div>
+                        <p className="text-gray-700 mb-3">
+                          {review.content}
+                        </p>
+                        {review.images && review.images.length > 0 && (
+                          <div className="grid grid-cols-3 gap-2 mt-3">
+                            {review.images.map((image, idx) => (
+                              <ImageWithFallback
+                                key={idx}
+                                src={image}
+                                alt={`Review image ${idx + 1}`}
+                                className="w-full h-24 object-cover rounded-lg"
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </>
+                )}
               </div>
             </TabsContent>
 

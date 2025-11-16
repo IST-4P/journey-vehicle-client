@@ -20,6 +20,11 @@ import { VehicleRecommendations } from "./VehicleRecommendations";
 
 export function HomePage() {
   const [currentHeroText, setCurrentHeroText] = useState(0);
+  const [equipmentRecommendations, setEquipmentRecommendations] = useState<any[]>([]);
+  const [carRecommendations, setCarRecommendations] = useState<any[]>([]);
+  const [loadingEquipment, setLoadingEquipment] = useState(false);
+  const [loadingCars, setLoadingCars] = useState(false);
+  
   const heroTexts = [
     { main: "Thuê xe dễ dàng", sub: "Hành trình tuyệt vời" },
     { main: "Thuê thiết bị du lịch", sub: "Trải nghiệm hoàn hảo" },
@@ -33,253 +38,119 @@ export function HomePage() {
     }, 3500);
     return () => clearInterval(interval);
   }, []);
-  // Mock data for car recommendations
-  const carRecommendations = [
-    {
-      id: "car-rec-1",
-      name: "Toyota Camry 2023",
-      brand: "Toyota",
-      image:
-        "https://images.unsplash.com/photo-1624578571415-09e9b1991929?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHx0b3lvdGElMjBjYW1yeSUyMHNlZGFuJTIwY2FyfGVufDF8fHx8MTc1OTY3MDI1Mnww&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
-      pricePerDay: 800000,
-      pricePerHour: 35000,
-      rating: 4.8,
-      available: true,
-      category: "sedan" as const,
-      transmission: "auto" as const,
-      fuel: "gasoline" as const,
-      seats: 5,
-    },
-    {
-      id: "car-rec-2",
-      name: "Honda Civic 2023",
-      brand: "Honda",
-      image:
-        "https://images.unsplash.com/photo-1742230376664-ce990c7d7bb9?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxob25kYSUyMGNpdmljJTIwc2VkYW58ZW58MXx8fHwxNzU5NjQ2ODA1fDA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
-      pricePerDay: 750000,
-      pricePerHour: 32000,
-      rating: 4.7,
-      available: true,
-      category: "sedan" as const,
-      transmission: "auto" as const,
-      fuel: "gasoline" as const,
-      seats: 5,
-    },
-    {
-      id: "car-rec-3",
-      name: "BMW X3 2023",
-      brand: "BMW",
-      image:
-        "https://images.unsplash.com/photo-1635990716619-7710162ea073?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxibXclMjBzdXYlMjBjYXJ8ZW58MXx8fHwxNzU5NjcwMjU3fDA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
-      pricePerDay: 1500000,
-      pricePerHour: 65000,
-      rating: 4.9,
-      available: true,
-      category: "suv" as const,
-      transmission: "auto" as const,
-      fuel: "gasoline" as const,
-      seats: 7,
-    },
-    {
-      id: "car-rec-4",
-      name: "Mercedes E-Class",
-      brand: "Mercedes-Benz",
-      image:
-        "https://images.unsplash.com/photo-1698816688678-a3f838fd4fe0?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxtZXJjZWRlcyUyMHNlZGFuJTIwbHV4dXJ5fGVufDF8fHx8MTc1OTY3MDI2MHww&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
-      pricePerDay: 1800000,
-      pricePerHour: 75000,
-      rating: 4.9,
-      available: true,
-      category: "sedan" as const,
-      transmission: "auto" as const,
-      fuel: "gasoline" as const,
-      seats: 5,
-    },
-    {
-      id: "car-rec-5",
-      name: "Audi A3 Hatchback",
-      brand: "Audi",
-      image:
-        "https://images.unsplash.com/photo-1610475426610-9d49bac9e278?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxhdWRpJTIwaGF0Y2hiYWNrJTIwY2FyfGVufDF8fHx8MTc1OTY3MDI2M3ww&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
-      pricePerDay: 900000,
-      pricePerHour: 40000,
-      rating: 4.6,
-      available: true,
-      category: "hatchback" as const,
-      transmission: "auto" as const,
-      fuel: "gasoline" as const,
-      seats: 5,
-    },
-    {
-      id: "car-rec-6",
-      name: "Lexus ES 2023",
-      brand: "Lexus",
-      image:
-        "https://images.unsplash.com/photo-1751982998942-dce5c9f4c95d?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxsZXh1cyUyMGx1eHVyeSUyMHNlZGFufGVufDF8fHx8MTc1OTY3MDI2NXww&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
-      pricePerDay: 1600000,
-      pricePerHour: 70000,
-      rating: 4.8,
-      available: true,
-      category: "sedan" as const,
-      transmission: "auto" as const,
-      fuel: "hybrid" as const,
-      seats: 5,
-    },
-    {
-      id: "car-rec-7",
-      name: "Ford Explorer 2023",
-      brand: "Ford",
-      image:
-        "https://images.unsplash.com/photo-1669349738612-f5ca5fc51871?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxmb3JkJTIwc3V2JTIwY2FyfGVufDF8fHx8MTc1OTY3MDI2OXww&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
-      pricePerDay: 1200000,
-      pricePerHour: 52000,
-      rating: 4.5,
-      available: false,
-      category: "suv" as const,
-      transmission: "auto" as const,
-      fuel: "gasoline" as const,
-      seats: 7,
-    },
-    {
-      id: "car-rec-8",
-      name: "Mazda3 Hatchback",
-      brand: "Mazda",
-      image:
-        "https://images.unsplash.com/photo-1655821545058-0c6c6538d5d8?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxtYXpkYSUyMGhhdGNoYmFjayUyMGNhcnxlbnwxfHx8fDE3NTk2NzAyNzN8MA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
-      pricePerDay: 850000,
-      pricePerHour: 38000,
-      rating: 4.4,
-      available: true,
-      category: "hatchback" as const,
-      transmission: "auto" as const,
-      fuel: "gasoline" as const,
-      seats: 5,
-    },
-  ];
 
-  // Mock data for equipment recommendations (displayed as vehicles for compatibility)
-  const equipmentRecommendations = [
-    {
-      id: "equip-rec-1",
-      name: "Lều cắm trại 4 người",
-      brand: "NatureHike",
-      image:
-        "https://images.unsplash.com/photo-1478131143081-80f7f84ca84d?w=800",
-      pricePerDay: 200000,
-      pricePerHour: 10000,
-      rating: 4.8,
-      available: true,
-      category: "sedan" as const,
-      transmission: "auto" as const,
-      fuel: "gasoline" as const,
-      seats: 4,
-    },
-    {
-      id: "equip-rec-2",
-      name: "Balo leo núi 65L",
-      brand: "Osprey",
-      image:
-        "https://images.unsplash.com/photo-1622260614153-03223fb72052?w=800",
-      pricePerDay: 100000,
-      pricePerHour: 5000,
-      rating: 4.7,
-      available: true,
-      category: "sedan" as const,
-      transmission: "auto" as const,
-      fuel: "gasoline" as const,
-      seats: 1,
-    },
-    {
-      id: "equip-rec-3",
-      name: "Túi ngủ mùa đông",
-      brand: "Coleman",
-      image:
-        "https://images.unsplash.com/photo-1634977017711-1024437432d9?w=800",
-      pricePerDay: 150000,
-      pricePerHour: 8000,
-      rating: 4.6,
-      available: true,
-      category: "sedan" as const,
-      transmission: "auto" as const,
-      fuel: "gasoline" as const,
-      seats: 1,
-    },
-    {
-      id: "equip-rec-4",
-      name: "Bếp gas mini du lịch",
-      brand: "Kovea",
-      image:
-        "https://images.unsplash.com/photo-1504851149312-7a075b496cc7?w=800",
-      pricePerDay: 80000,
-      pricePerHour: 4000,
-      rating: 4.5,
-      available: true,
-      category: "sedan" as const,
-      transmission: "auto" as const,
-      fuel: "gasoline" as const,
-      seats: 1,
-    },
-    {
-      id: "equip-rec-5",
-      name: "Đèn pin siêu sáng",
-      brand: "Fenix",
-      image:
-        "https://images.unsplash.com/photo-1590698933947-a202b069a861?w=800",
-      pricePerDay: 50000,
-      pricePerHour: 3000,
-      rating: 4.9,
-      available: true,
-      category: "sedan" as const,
-      transmission: "auto" as const,
-      fuel: "gasoline" as const,
-      seats: 1,
-    },
-    {
-      id: "equip-rec-6",
-      name: "Máy lọc nước du lịch",
-      brand: "LifeStraw",
-      image:
-        "https://images.unsplash.com/photo-1582719471384-894fbb16e074?w=800",
-      pricePerDay: 120000,
-      pricePerHour: 6000,
-      rating: 4.8,
-      available: true,
-      category: "sedan" as const,
-      transmission: "auto" as const,
-      fuel: "gasoline" as const,
-      seats: 1,
-    },
-    {
-      id: "equip-rec-7",
-      name: "Võng xếp du lịch",
-      brand: "ENO",
-      image:
-        "https://images.unsplash.com/photo-1595526114035-0d45ed16cfbf?w=800",
-      pricePerDay: 90000,
-      pricePerHour: 5000,
-      rating: 4.4,
-      available: false,
-      category: "sedan" as const,
-      transmission: "auto" as const,
-      fuel: "gasoline" as const,
-      seats: 1,
-    },
-    {
-      id: "equip-rec-8",
-      name: "Bình giữ nhiệt 1.5L",
-      brand: "Thermos",
-      image:
-        "https://images.unsplash.com/photo-1602143407151-7111542de6e8?w=800",
-      pricePerDay: 60000,
-      pricePerHour: 3500,
-      rating: 4.3,
-      available: true,
-      category: "sedan" as const,
-      transmission: "auto" as const,
-      fuel: "gasoline" as const,
-      seats: 1,
-    },
-  ];
+  // Fetch equipment recommendations from API
+  useEffect(() => {
+    fetchEquipmentRecommendations();
+    fetchCarRecommendations();
+  }, []);
+
+  const fetchEquipmentRecommendations = async () => {
+    setLoadingEquipment(true);
+    try {
+      const params = new URLSearchParams({
+        limit: "8",
+        page: "1",
+      });
+
+      const response = await fetch(
+        `${import.meta.env.VITE_API_BASE_URL}/device?${params.toString()}`,
+        {
+          credentials: "include",
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch devices (${response.status})`);
+      }
+
+      const payload = await response.json();
+      const devices = payload?.data?.devices ?? [];
+
+      // Convert equipment data to vehicle format for compatibility with VehicleRecommendations component
+      const normalized = devices.map((device: any) => ({
+        id: device.id,
+        name: device.name,
+        brand: device.categoryName ?? device.brand ?? "Equipment",
+        image: device.images?.[0] ?? "https://images.unsplash.com/photo-1478131143081-80f7f84ca84d?w=800",
+        pricePerDay: Number(device.price) || 0,
+        pricePerHour: Math.round(Number(device.price) / 24) || 0,
+        rating: device.rating ?? 4.8,
+        available: device.status === "available",
+        category: "sedan" as const,
+        transmission: "auto" as const,
+        fuel: "gasoline" as const,
+        seats: device.quantity ?? 1,
+      }));
+
+      setEquipmentRecommendations(normalized);
+    } catch (error) {
+      console.error("Error fetching equipment:", error);
+      setEquipmentRecommendations([]);
+    } finally {
+      setLoadingEquipment(false);
+    }
+  };
+
+  const fetchCarRecommendations = async () => {
+    setLoadingCars(true);
+    try {
+      const params = new URLSearchParams({
+        type: "CAR",
+        page: "1",
+        limit: "8",
+        status: "ACTIVE",
+      });
+
+      const response = await fetch(
+        `${import.meta.env.VITE_API_BASE_URL}/vehicle?${params.toString()}`,
+        { credentials: "include" }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch vehicles (${response.status})`);
+      }
+
+      const payload = await response.json();
+      const vehicles = payload?.data?.vehicles ?? [];
+
+      const normalized = vehicles.map((vehicle: any) => ({
+        id: vehicle.id,
+        name: vehicle.name,
+        brand:
+          vehicle.brandName ||
+          vehicle.brandId ||
+          vehicle.brand ||
+          "HacMieu",
+        image:
+          vehicle.images?.[0] ||
+          "https://images.unsplash.com/photo-1610475426610-9d49bac9e278?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxhdWRpJTIwaGF0Y2hiYWNrJTIwY2FyfGVufDF8fHx8MTc1OTY3MDI2M3ww&ixlib=rb-4.1.0&q=80&w=1080",
+        pricePerDay:
+          Number(vehicle.pricePerDay) ||
+          Number(vehicle.price) ||
+          Number(vehicle.pricePerHour) * 24 ||
+          0,
+        pricePerHour: Number(vehicle.pricePerHour) || 0,
+        rating: vehicle.actualRating ?? vehicle.averageRating ?? 4.8,
+        available: vehicle.status === "ACTIVE" || vehicle.available,
+        category: (vehicle.category || "sedan").toLowerCase(),
+        transmission:
+          (vehicle.transmission || "auto").toLowerCase() === "automatic"
+            ? "auto"
+            : "manual",
+        fuel: (vehicle.fuelType || "gasoline").toLowerCase(),
+        seats: vehicle.seats,
+      }));
+
+      setCarRecommendations(normalized);
+    } catch (error) {
+      console.error("Error fetching car recommendations:", error);
+      setCarRecommendations([]);
+    } finally {
+      setLoadingCars(false);
+    }
+  };
+  
 
   const features = [
     {
@@ -395,6 +266,16 @@ export function HomePage() {
                   <span className="text-white">Thuê thiết bị</span>
                 </Button>
               </Link>
+              <Link to="/combos">
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className="w-full sm:w-auto text-white border-white hover:bg-white hover:text-yellow-500 bg-transparent"
+                >
+                  <Package className="mr-2 h-5 w-5 text-white" />
+                  <span className="text-white">Combo thiết bị</span>
+                </Button>
+              </Link>
             </div>
           </div>
         </div>
@@ -463,7 +344,7 @@ export function HomePage() {
         title="Thiết bị dành cho bạn"
         vehicles={equipmentRecommendations}
         viewAllLink="/equipment"
-        type="car"
+        type="equipment"
       />
 
       {/* Destination Carousel */}

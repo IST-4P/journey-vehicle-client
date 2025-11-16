@@ -411,7 +411,7 @@ export function ChatWidget() {
     </div>
   );
 
-  const quickReplies = ["Cách thuê xe?", "Liên hệ hỗ trợ"];
+  const quickReplies = [];
 
   return (
     <>
@@ -523,7 +523,7 @@ export function ChatWidget() {
                         variant="outline"
                         size="sm"
                         className="w-full text-xs"
-                        onClick={() => navigate("/complaint")}
+                        onClick={() => navigate("/profile/complaints")}
                       >
                         Mở khiếu nại / trao đổi với hỗ trợ
                       </Button>
