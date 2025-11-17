@@ -20,6 +20,7 @@ import {
 } from "react-router-dom";
 import { toast } from "sonner";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
+import { formatVNDate } from "../utils/timezone";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -54,10 +55,22 @@ interface Review {
   date: string;
 }
 
-export function ComboDetail() {
+interface User {
+  id: string;
+  email: string;
+  fullName?: string;
+  phoneNumber?: string;
+}
+
+interface ComboDetailProps {
+  user: User | null;
+}
+
+export function ComboDetail({ user }: ComboDetailProps) {
   const { id } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL;
   const [combo, setCombo] = useState<Combo | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
@@ -65,6 +78,7 @@ export function ComboDetail() {
   const [isFavorite, setIsFavorite] = useState(false);
   const [discountCode, setDiscountCode] = useState("");
   const [appliedDiscount, setAppliedDiscount] = useState<any>(null);
+  const [bookingLoading, setBookingLoading] = useState(false);
   const [rentalDuration, setRentalDuration] = useState<{
     startDate: string;
     startTime: string;
@@ -125,7 +139,7 @@ export function ComboDetail() {
 
     setLoading(true);
     try {
-      const url = `${import.meta.env.VITE_API_BASE_URL}/combo/${id}`;
+      const url = `${apiBaseUrl}/combo/${id}`;
       console.log('[ComboDetail] Fetching from:', url);
 
       const response = await fetch(url, {
@@ -182,21 +196,75 @@ export function ComboDetail() {
     }
   };
 
-  const handleBooking = () => {
+  const handleBooking = async () => {
     if (!rentalDuration) {
       toast.error("Vui lòng chọn thời gian thuê");
       return;
     }
 
-    const bookingData = {
-      comboId: combo?.id,
-      ...rentalDuration,
-      discountCode: appliedDiscount?.code,
-    };
+    if (!combo?.id) {
+      toast.error("Không tìm thấy thông tin combo");
+      return;
+    }
 
-    navigate(`/booking-combo/${combo?.id}`, {
-      state: { bookingData, combo },
-    });
+    setBookingLoading(true);
+    try {
+      if (!user) {
+        toast.error("Vui lòng đăng nhập để đặt thuê");
+        return;
+      }
+
+      // Get token, may be null if using cookie-based auth
+      const token = localStorage.getItem('accessToken');
+
+      // Step 1: Create rental
+      const response = await fetch(`${apiBaseUrl}/rental`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token && { 'Authorization': `Bearer ${token}` }),
+        },
+        body: JSON.stringify({
+          items: [
+            {
+              targetId: combo.id,
+              isCombo: true,
+              quantity: 1,
+            },
+          ],
+          startDate: rentalDuration.startDate,
+          endDate: rentalDuration.endDate,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.message || 'Không thể tạo đơn thuê');
+      }
+
+      const rentalId = result.data?.id;
+      if (!rentalId) {
+        throw new Error('Không nhận được mã đơn thuê');
+      }
+
+      toast.success('Tạo đơn thuê thành công!');
+      
+      // Step 2: Navigate to payment page with rentalId
+      navigate(`/combo-payment/${rentalId}`, {
+        state: {
+          rental: result.data,
+          combo: combo,
+          rentalDuration: rentalDuration,
+        },
+      });
+    } catch (error) {
+      console.error('Booking error:', error);
+      toast.error(error instanceof Error ? error.message : 'Đặt thuê thất bại');
+    } finally {
+      setBookingLoading(false);
+    }
   };
 
   const nextImage = () => {
@@ -614,9 +682,9 @@ export function ComboDetail() {
                   className="w-full"
                   size="lg"
                   onClick={handleBooking}
-                  disabled={!rentalDuration}
+                  disabled={!rentalDuration || bookingLoading}
                 >
-                  Đặt thuê ngay
+                  {bookingLoading ? 'Đang xử lý...' : 'Đặt thuê ngay'}
                 </Button>
 
                 {!rentalDuration && (

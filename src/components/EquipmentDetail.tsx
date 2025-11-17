@@ -76,7 +76,18 @@ interface ReviewsResponse {
   statusCode: number;
 }
 
-export function EquipmentDetail() {
+interface User {
+  id: string;
+  email: string;
+  fullName?: string;
+  phoneNumber?: string;
+}
+
+interface EquipmentDetailProps {
+  user: User | null;
+}
+
+export function EquipmentDetail({ user }: EquipmentDetailProps) {
   const { id } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -97,6 +108,7 @@ export function EquipmentDetail() {
   } | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [bookingLoading, setBookingLoading] = useState(false);
 
   useEffect(() => {
     fetchEquipmentDetail();
@@ -222,21 +234,75 @@ export function EquipmentDetail() {
     }
   };
 
-  const handleBooking = () => {
+  const handleBooking = async () => {
     if (!rentalDuration) {
       toast.error("Vui lòng chọn thời gian thuê");
       return;
     }
 
-    const bookingData = {
-      equipmentId: equipment?.id,
-      ...rentalDuration,
-      discountCode: appliedDiscount?.code,
-    };
+    if (!equipment?.id) {
+      toast.error("Không tìm thấy thông tin thiết bị");
+      return;
+    }
 
-    navigate(`/booking-equipment/${equipment?.id}`, {
-      state: { bookingData, equipment },
-    });
+    setBookingLoading(true);
+    try {
+      if (!user) {
+        toast.error("Vui lòng đăng nhập để đặt thuê");
+        return;
+      }
+
+      // Get token, may be null if using cookie-based auth
+      const token = localStorage.getItem('accessToken');
+
+      // Step 1: Create rental
+      const response = await fetch(`${apiBaseUrl}/rental`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token && { 'Authorization': `Bearer ${token}` }),
+        },
+        body: JSON.stringify({
+          items: [
+            {
+              targetId: equipment.id,
+              isCombo: false,
+              quantity: 1,
+            },
+          ],
+          startDate: rentalDuration.startDate,
+          endDate: rentalDuration.endDate,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.message || 'Không thể tạo đơn thuê');
+      }
+
+      const rentalId = result.data?.id;
+      if (!rentalId) {
+        throw new Error('Không nhận được mã đơn thuê');
+      }
+
+      toast.success('Tạo đơn thuê thành công!');
+      
+      // Step 2: Navigate to payment page with rentalId
+      navigate(`/equipment-payment/${rentalId}`, {
+        state: {
+          rental: result.data,
+          equipment: equipment,
+          rentalDuration: rentalDuration,
+        },
+      });
+    } catch (error) {
+      console.error('Error creating rental:', error);
+      toast.error(error instanceof Error ? error.message : 'Có lỗi xảy ra khi đặt thuê');
+    } finally {
+      setBookingLoading(false);
+    }
   };
 
   const nextImage = () => {
@@ -546,13 +612,25 @@ export function EquipmentDetail() {
                         type="date"
                         value={rentalDuration?.startDate || ""}
                         onChange={(e) => {
-                          const days = rentalDuration?.endDate
-                            ? Math.ceil((new Date(rentalDuration.endDate).getTime() - new Date(e.target.value).getTime()) / (1000 * 60 * 60 * 24))
-                            : 1;
+                          const selectedDate = new Date(e.target.value);
+                          const currentEndDate = rentalDuration?.endDate ? new Date(rentalDuration.endDate) : null;
+                          
+                          // Nếu chưa có endDate hoặc endDate <= startDate mới, tự động set endDate = startDate + 1 ngày
+                          let newEndDate: string;
+                          if (!currentEndDate || currentEndDate <= selectedDate) {
+                            const nextDay = new Date(selectedDate);
+                            nextDay.setDate(nextDay.getDate() + 1);
+                            newEndDate = nextDay.toISOString().split('T')[0];
+                          } else {
+                            newEndDate = rentalDuration.endDate;
+                          }
+                          
+                          const days = Math.ceil((new Date(newEndDate).getTime() - selectedDate.getTime()) / (1000 * 60 * 60 * 24));
+                          
                           setRentalDuration({
                             startDate: e.target.value,
                             startTime: "08:00",
-                            endDate: rentalDuration?.endDate || e.target.value,
+                            endDate: newEndDate,
                             endTime: "18:00",
                             hours: Math.max(1, days * 24),
                           });
@@ -663,9 +741,9 @@ export function EquipmentDetail() {
                   className="w-full"
                   size="lg"
                   onClick={handleBooking}
-                  disabled={!rentalDuration?.startDate || !rentalDuration?.endDate}
+                  disabled={!rentalDuration?.startDate || !rentalDuration?.endDate || bookingLoading}
                 >
-                  Đặt thuê ngay
+                  {bookingLoading ? 'Đang xử lý...' : 'Đặt thuê ngay'}
                 </Button>
 
                 {(!rentalDuration?.startDate || !rentalDuration?.endDate) && (

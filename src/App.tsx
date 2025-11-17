@@ -14,11 +14,13 @@ import { BookingProcess } from "./components/BookingProcess";
 import { CarRental } from "./components/CarRental";
 import { ChatWidget } from "./components/ChatWidget";
 import { ComboDetail } from "./components/ComboDetail";
+import { ComboPayment } from "./components/ComboPayment";
 import { ComboRental } from "./components/ComboRental";
 import { Complaint } from "./components/Complaint";
 import { ComplaintDetail } from "./components/ComplaintDetail";
 import { Contact } from "./components/Contact";
 import { EquipmentDetail } from "./components/EquipmentDetail";
+import { EquipmentPayment } from "./components/EquipmentPayment";
 import { EquipmentRental } from "./components/EquipmentRental";
 import { Footer } from "./components/Footer";
 import { Header } from "./components/Header";
@@ -207,8 +209,10 @@ export default function App() {
             <Route path="/blog" element={<Blog />} />
 
             <Route path="/vehicle/:id" element={<VehicleDetail />} />
-            <Route path="/equipment/:id" element={<EquipmentDetail />} />
-            <Route path="/combo/:id" element={<ComboDetail />} />
+            <Route path="/equipment/:id" element={<EquipmentDetail user={user} />} />
+            <Route path="/equipment-payment/:rentalId" element={<EquipmentPayment user={user} />} />
+            <Route path="/combo/:id" element={<ComboDetail user={user} />} />
+            <Route path="/combo-payment/:rentalId" element={<ComboPayment user={user} />} />
             <Route path="/blog/:id" element={<BlogDetail />} />
             <Route path="/booking/:vehicleId" element={<BookingProcess />} />
             <Route path="/about" element={<AboutUs />} />

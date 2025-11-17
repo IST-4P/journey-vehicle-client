@@ -21,7 +21,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from './
 import { toast } from 'sonner';
 import { uploadAvatarImage, uploadLicenseImages } from '../utils/media-upload';
 import { connectPaymentSocket } from '../utils/ws-client';
-import { formatVNTime } from '../utils/timezone';
+import { formatVNTime, formatVNDate } from '../utils/timezone';
 
 // License class enum
 export const LicenseClassEnum = {
@@ -79,7 +79,8 @@ export function UserProfile({ user }: UserProfileProps) {
 
   const sidebarItems = [
     { id: 'account', label: 'Tài khoản của tôi', icon: User, path: '/profile/account' },
-    { id: 'history', label: 'Lịch sử thuê', icon: History, path: '/profile/history' },
+    { id: 'history', label: 'Lịch sử thuê xe', icon: History, path: '/profile/history' },
+    { id: 'equipment-history', label: 'Lịch sử thuê thiết bị', icon: History, path: '/profile/equipment-history' },
     { id: 'payment', label: 'Ví', icon: CreditCard, path: '/profile/payment' },
     { id: 'complaints', label: 'Lịch sử khiếu nại', icon: MessageSquare, path: '/profile/complaints' },
     { id: 'password', label: 'Đổi mật khẩu', icon: Lock, path: '/profile/password' },
@@ -131,6 +132,7 @@ export function UserProfile({ user }: UserProfileProps) {
           <Routes>
             <Route path="/account" element={<AccountTab user={currentUser} driver={driverLicense} />} />
             <Route path="/history" element={<HistoryTab />} />
+            <Route path="/equipment-history" element={<EquipmentHistoryTab />} />
             <Route path="/payment" element={<PaymentTab />} />
             <Route path="/complaints" element={<ComplaintsTab />} />
             <Route path="/password" element={<PasswordTab />} />
@@ -3709,6 +3711,551 @@ interface BankAccountPayload {
   bankCode: string;
   accountNumber: string;
   accountHolder: string;
+}
+
+// Equipment rental status filters
+const EQUIPMENT_STATUS_FILTERS = [
+  { label: 'Tất cả', value: 'ALL' },
+  { label: 'Chờ thanh toán', value: 'PENDING' },
+  { label: 'Đang thuê', value: 'RECEIVED' },
+  { label: 'Hoàn tất', value: 'COMPLETED' },
+  { label: 'Đã hủy', value: 'CANCELLED' }
+] as const;
+
+const EQUIPMENT_STATUS_STYLES: Record<string, { label: string; className: string }> = {
+  PENDING: { label: 'Chờ thanh toán', className: 'bg-amber-100 text-amber-700' },
+  PAID: { label: 'Đã thanh toán - Chờ nhận hàng', className: 'bg-blue-100 text-blue-700' },
+  RECEIVED: { label: 'Đang thuê', className: 'bg-green-100 text-green-700' },
+  COMPLETED: { label: 'Hoàn tất', className: 'bg-emerald-100 text-emerald-700' },
+  CANCELLED: { label: 'Đã hủy', className: 'bg-rose-100 text-rose-700' },
+  EXPIRED: { label: 'Hết hạn', className: 'bg-gray-100 text-gray-700' }
+};
+
+function EquipmentHistoryTab() {
+  const [rentals, setRentals] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalItems, setTotalItems] = useState(0);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<(typeof EQUIPMENT_STATUS_FILTERS)[number]['value']>('ALL');
+  const [selectedRentalId, setSelectedRentalId] = useState<string | null>(null);
+  const [selectedRentalDetail, setSelectedRentalDetail] = useState<any>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailTab, setDetailTab] = useState<'info' | 'extension'>('info');
+  const [extensions, setExtensions] = useState<any[]>([]);
+  const [extensionLoading, setExtensionLoading] = useState(false);
+  const apiBase = import.meta.env.VITE_API_BASE_URL;
+  const limit = 10;
+  const isDesktop = useMediaQuery('(min-width: 768px)');
+
+  const fetchRentals = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const token = localStorage.getItem('accessToken');
+      const response = await fetch(`${apiBase}/rental?page=${page}&limit=${limit}`, {
+        credentials: 'include',
+        headers: {
+          ...(token && { 'Authorization': `Bearer ${token}` }),
+        },
+      });
+
+      if (!response.ok) throw new Error('Không thể tải lịch sử thuê thiết bị');
+
+      const result = await response.json();
+      setRentals(result.data?.rentals || []);
+      setTotalPages(result.data?.totalPages || 1);
+      setTotalItems(result.data?.totalItems || 0);
+    } catch (err) {
+      console.error('Error fetching equipment rentals:', err);
+      setError(err instanceof Error ? err.message : 'Không thể tải lịch sử thuê thiết bị');
+      toast.error('Không thể tải lịch sử thuê thiết bị');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchRentalExtensions = async (rentalId: string) => {
+    if (!apiBase) return;
+    
+    setExtensionLoading(true);
+    try {
+      const response = await fetch(`${apiBase}/rental/${rentalId}/extensions`, {
+        credentials: 'include'
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      setExtensions(Array.isArray(data.data) ? data.data : Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Error fetching extensions:', err);
+      setExtensions([]);
+    } finally {
+      setExtensionLoading(false);
+    }
+  };
+
+  const fetchRentalDetail = async (rentalId: string) => {
+    setDetailLoading(true);
+    try {
+      const token = localStorage.getItem('accessToken');
+      const response = await fetch(`${apiBase}/rental/${rentalId}`, {
+        credentials: 'include',
+        headers: {
+          ...(token && { 'Authorization': `Bearer ${token}` }),
+        },
+      });
+
+      if (!response.ok) throw new Error('Không thể tải chi tiết đơn thuê');
+
+      const result = await response.json();
+      setSelectedRentalDetail(result.data);
+    } catch (err) {
+      console.error('Error fetching rental detail:', err);
+      toast.error('Không thể tải chi tiết đơn thuê');
+      setSelectedRentalDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRentals();
+  }, [page]);
+
+  // Fetch detail when selecting a rental
+  useEffect(() => {
+    if (selectedRentalId) {
+      fetchRentalDetail(selectedRentalId);
+      fetchRentalExtensions(selectedRentalId);
+      setDetailTab('info');
+    } else {
+      setSelectedRentalDetail(null);
+      setExtensions([]);
+    }
+  }, [selectedRentalId]);
+
+  // Reset page when filter changes
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter, searchTerm]);
+
+  const filteredRentals = useMemo(() => {
+    if (!Array.isArray(rentals)) return [];
+    
+    const keyword = searchTerm.trim().toLowerCase();
+    return rentals.filter((rental) => {
+      // Search filter
+      const matchesKeyword = !keyword || rental.id?.toLowerCase().includes(keyword);
+
+      const normalizedStatus = rental.status?.toUpperCase() || '';
+
+      // Status filter
+      if (statusFilter === 'ALL') {
+        return matchesKeyword;
+      }
+
+      if (statusFilter === 'PENDING') {
+        return matchesKeyword && normalizedStatus === 'PENDING';
+      }
+
+      if (statusFilter === 'RECEIVED') {
+        return matchesKeyword && (normalizedStatus === 'RECEIVED' || normalizedStatus === 'PAID');
+      }
+
+      if (statusFilter === 'COMPLETED') {
+        return matchesKeyword && normalizedStatus === 'COMPLETED';
+      }
+
+      if (statusFilter === 'CANCELLED') {
+        return matchesKeyword && (normalizedStatus === 'CANCELLED' || normalizedStatus === 'EXPIRED');
+      }
+
+      return matchesKeyword;
+    });
+  }, [rentals, searchTerm, statusFilter]);
+
+  const getStatusBadge = (status: string) => {
+    const config = EQUIPMENT_STATUS_STYLES[status] || { 
+      label: status, 
+      className: 'bg-gray-100 text-gray-600' 
+    };
+    return <Badge className={config.className}>{config.label}</Badge>;
+  };
+
+  return (
+    <div className="space-y-5">
+      <Card>
+        <CardHeader>
+          <CardTitle>Lịch sử thuê thiết bị</CardTitle>
+          <p className="text-sm text-gray-600">
+            Theo dõi các thiết bị và combo bạn đã thuê theo từng trạng thái
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-col gap-3">
+            <Input
+              placeholder="Tìm tên thiết bị, combo, mã đơn..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="sm:max-w-sm"
+            />
+            <div className="flex flex-wrap gap-2">
+              {EQUIPMENT_STATUS_FILTERS.map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  onClick={() => setStatusFilter(item.value)}
+                  className={`rounded-full border px-3 py-1 text-sm transition ${
+                    statusFilter === item.value
+                      ? 'border-blue-600 bg-blue-600 text-white'
+                      : 'border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-600'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <div className="flex items-center justify-between border-b px-4 py-3">
+          <div>
+            <p className="text-sm font-semibold text-gray-900">Danh sách thuê thiết bị</p>
+            <p className="text-xs text-gray-500">
+              Trang {page}/{Math.max(totalPages, 1)}
+            </p>
+          </div>
+          <Badge variant="secondary">{filteredRentals.length}</Badge>
+        </div>
+
+        <div className="divide-y max-h-[32rem] overflow-y-auto">
+          {error && (
+            <div className="px-4 py-4 bg-red-50 border-b border-red-100">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="h-4 w-4 text-red-600 mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold text-red-900">Không thể tải danh sách</p>
+                  <p className="text-sm text-red-700">{error}</p>
+                  <Button variant="outline" size="sm" className="mt-2" onClick={fetchRentals}>
+                    Thử lại
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {loading ? (
+            <div className="flex items-center justify-center py-10">
+              <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+              <span className="ml-2 text-sm text-gray-500">Đang tải...</span>
+            </div>
+          ) : filteredRentals.length === 0 ? (
+            <div className="px-4 py-10 text-center text-sm text-gray-500">
+              Không tìm thấy lịch sử thuê thiết bị
+            </div>
+          ) : (
+            filteredRentals.map((rental) => {
+              const isSelected = selectedRentalId === rental.id;
+              return (
+                <div key={rental.id}>
+                  <div 
+                    className={`p-4 cursor-pointer transition ${isSelected ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
+                    onClick={() => setSelectedRentalId(isSelected ? null : rental.id)}
+                  >
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <p className="font-medium text-gray-900">
+                            {rental.items && rental.items.length > 0
+                              ? rental.items.map((item: any) => item.name).join(', ')
+                              : (rental.items?.some((item: any) => item.isCombo) ? 'Đơn thuê combo' : 'Đơn thuê thiết bị')}
+                          </p>
+                          {rental.items?.some((item: any) => item.isCombo) && (
+                            <Badge className="bg-purple-100 text-purple-700">Combo</Badge>
+                          )}
+                          {getStatusBadge(rental.status)}
+                        </div>
+                        <p className="text-xs text-gray-500">Mã đơn: {rental.id}</p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Ngày tạo: {formatVNTime(rental.createdAt)}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-lg font-semibold text-blue-600">
+                          {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(rental.totalPrice || 0)}
+                        </p>
+                        {rental.discountPercent > 0 && (
+                          <Badge variant="secondary" className="mt-1">
+                            Giảm {rental.discountPercent}%
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <p className="text-gray-500">Ngày bắt đầu</p>
+                        <p className="font-medium">{formatVNDate(rental.startDate)}</p>
+                      </div>
+                      <div>
+                        <p className="text-gray-500">Ngày kết thúc</p>
+                        <p className="font-medium">{formatVNDate(rental.endDate)}</p>
+                      </div>
+                    </div>
+
+                    {rental.status === 'PENDING' && (
+                      <div className="mt-3 pt-3 border-t">
+                        <Button
+                          size="sm"
+                          className="w-full"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const isCombo = rental.items?.some((item: any) => item.isCombo);
+                            const paymentUrl = isCombo 
+                              ? `/combo-payment/${rental.id}` 
+                              : `/equipment-payment/${rental.id}`;
+                            window.location.href = paymentUrl;
+                          }}
+                        >
+                          Tiếp tục thanh toán
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Detail section with tabs */}
+                  {isSelected && (
+                    <div className="bg-gray-50 px-4 py-4 border-t">
+                      {detailLoading ? (
+                        <div className="flex items-center justify-center py-6">
+                          <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+                          <span className="ml-2 text-sm text-gray-500">Đang tải chi tiết...</span>
+                        </div>
+                      ) : selectedRentalDetail ? (
+                        isDesktop ? (
+                          <Tabs value={detailTab} onValueChange={(value) => setDetailTab(value as 'info' | 'extension')}>
+                            <TabsList className="grid grid-cols-2 w-full max-w-md mb-4">
+                              <TabsTrigger value="info">Thông tin thuê</TabsTrigger>
+                              <TabsTrigger value="extension">Lịch sử gia hạn</TabsTrigger>
+                            </TabsList>
+                            <TabsContent value="info">
+                              <EquipmentDetailInfo rental={selectedRentalDetail} />
+                            </TabsContent>
+                            <TabsContent value="extension">
+                              <EquipmentExtensionList 
+                                extensions={extensions} 
+                                loading={extensionLoading}
+                                rentalId={selectedRentalId!}
+                              />
+                            </TabsContent>
+                          </Tabs>
+                        ) : (
+                          <Accordion
+                            type="single"
+                            collapsible
+                            value={detailTab}
+                            onValueChange={(value) => value && setDetailTab(value as 'info' | 'extension')}
+                          >
+                            <AccordionItem value="info">
+                              <AccordionTrigger>Thông tin thuê</AccordionTrigger>
+                              <AccordionContent>
+                                <EquipmentDetailInfo rental={selectedRentalDetail} />
+                              </AccordionContent>
+                            </AccordionItem>
+                            <AccordionItem value="extension">
+                              <AccordionTrigger>Lịch sử gia hạn</AccordionTrigger>
+                              <AccordionContent>
+                                <EquipmentExtensionList 
+                                  extensions={extensions} 
+                                  loading={extensionLoading}
+                                  rentalId={selectedRentalId!}
+                                />
+                              </AccordionContent>
+                            </AccordionItem>
+                          </Accordion>
+                        )
+                      ) : (
+                        <div className="text-center py-6 text-sm text-gray-500">
+                          Không thể tải chi tiết
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {totalPages > 1 && (
+          <div className="border-t px-4 py-3">
+            <PaginationControls page={page} totalPages={totalPages} onPageChange={setPage} />
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// Component hiển thị thông tin chi tiết đơn thuê
+function EquipmentDetailInfo({ rental }: { rental: any }) {
+  return (
+    <div className="space-y-4">
+      <div>
+        <h4 className="text-sm font-semibold text-gray-900 mb-3">Chi tiết đơn thuê</h4>
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <div>
+            <p className="text-gray-500">Phí thuê</p>
+            <p className="font-medium">
+              {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(rental.rentalFee || 0)}
+            </p>
+          </div>
+          <div>
+            <p className="text-gray-500">Tiền cọc</p>
+            <p className="font-medium">
+              {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(rental.deposit || 0)}
+            </p>
+          </div>
+          <div>
+            <p className="text-gray-500">Tổng số lượng</p>
+            <p className="font-medium">{rental.totalQuantity || 0}</p>
+          </div>
+          {rental.actualEndDate && (
+            <div>
+              <p className="text-gray-500">Ngày trả thực tế</p>
+              <p className="font-medium">{formatVNDate(rental.actualEndDate)}</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {rental.items && rental.items.length > 0 && (
+        <div>
+          <h4 className="text-sm font-semibold text-gray-900 mb-3">Thiết bị thuê</h4>
+          <div className="space-y-2">
+            {rental.items.map((item: any, idx: number) => (
+              <div key={idx} className="bg-white rounded-lg p-3 border">
+                <div className="flex justify-between items-start mb-2">
+                  <div className="flex-1">
+                    <p className="font-medium text-gray-900">{item.name}</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {item.detail?.device?.description || ''}
+                    </p>
+                  </div>
+                  <Badge variant="outline">x{item.quantity}</Badge>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs mt-2">
+                  <div>
+                    <span className="text-gray-500">Đơn giá: </span>
+                    <span className="font-medium">
+                      {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(item.unitPrice || 0)}
+                    </span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-gray-500">Tạm tính: </span>
+                    <span className="font-semibold text-blue-600">
+                      {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(item.subtotal || 0)}
+                    </span>
+                  </div>
+                </div>
+                {item.detail?.device?.information && item.detail.device.information.length > 0 && (
+                  <div className="mt-2 pt-2 border-t">
+                    <p className="text-xs text-gray-500 mb-1">Thông số:</p>
+                    <ul className="text-xs text-gray-600 space-y-0.5">
+                      {item.detail.device.information.map((info: string, i: number) => (
+                        <li key={i}>• {info}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Component hiển thị lịch sử gia hạn của đơn thuê
+function EquipmentExtensionList({ extensions, loading, rentalId }: { extensions: any[]; loading: boolean; rentalId: string }) {
+  const getExtensionStatusBadge = (status: string) => {
+    const styles: Record<string, { label: string; className: string }> = {
+      PENDING: { label: 'Chờ xử lý', className: 'bg-amber-100 text-amber-700' },
+      APPROVED: { label: 'Đã duyệt', className: 'bg-green-100 text-green-700' },
+      REJECTED: { label: 'Từ chối', className: 'bg-red-100 text-red-700' },
+      COMPLETED: { label: 'Hoàn tất', className: 'bg-blue-100 text-blue-700' }
+    };
+    const config = styles[status] || { label: status, className: 'bg-gray-100 text-gray-600' };
+    return <Badge className={config.className}>{config.label}</Badge>;
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-6">
+        <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+        <span className="ml-2 text-sm text-gray-500">Đang tải lịch sử gia hạn...</span>
+      </div>
+    );
+  }
+
+  if (extensions.length === 0) {
+    return (
+      <div className="py-6 text-center text-sm text-gray-500">
+        Chưa có lịch sử gia hạn cho đơn này
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {extensions.map((ext) => (
+        <div key={ext.id} className="bg-white rounded-lg p-4 border">
+          <div className="flex items-start justify-between mb-3">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-1">
+                {getExtensionStatusBadge(ext.status)}
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                Ngày tạo: {formatVNTime(ext.createdAt)}
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-lg font-semibold text-blue-600">
+                {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(ext.additionalFee || 0)}
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <p className="text-gray-500">Ngày kết thúc cũ</p>
+              <p className="font-medium">{formatVNDate(ext.oldEndDate)}</p>
+            </div>
+            <div>
+              <p className="text-gray-500">Ngày kết thúc mới</p>
+              <p className="font-medium text-green-600">{formatVNDate(ext.newEndDate)}</p>
+            </div>
+          </div>
+
+          {ext.reason && (
+            <div className="mt-3 pt-3 border-t">
+              <p className="text-xs text-gray-500">Lý do:</p>
+              <p className="text-sm text-gray-700 mt-1">{ext.reason}</p>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function PaymentTab() {
