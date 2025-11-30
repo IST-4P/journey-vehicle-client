@@ -846,11 +846,14 @@ interface RefundData {
 
 interface ComplaintData {
   id: string;
+  complaintId?: string;
   userId: string;
   title: string;
-  status: 'OPEN' | 'IN_PROGRESS' | 'CLOSED';
+  status: 'OPEN' | 'IN_PROGRESS' | 'CLOSED' | string;
   createdAt: string;
-  updatedAt: string;
+  updatedAt?: string;
+  lastMessage?: string;
+  lastMessageAt?: string;
 }
 
 interface BookingDetailData extends BookingSummary {
@@ -3013,6 +3016,65 @@ function useRefundList(page: number, limit: number) {
   };
 }
 
+const sanitizeComplaintId = (value: unknown): string => {
+  if (value === null || value === undefined) return '';
+  const str = String(value).trim();
+  if (!str) return '';
+  const lower = str.toLowerCase();
+  if (lower === 'undefined' || lower === 'null') return '';
+  return str;
+};
+
+const normalizeComplaintListItem = (payload: any): ComplaintData => {
+  const complaintIdRaw =
+    payload?.complaintId ?? payload?.complaint_id ?? payload?.id ?? payload?.cId ?? '';
+  const complaintId = sanitizeComplaintId(complaintIdRaw);
+  const fallbackId =
+    complaintId ||
+    sanitizeComplaintId(
+      payload?.id ?? payload?.complaint_id ?? payload?.cId ?? payload?.complaintCode
+    );
+  const resolvedId = fallbackId;
+  const createdAt =
+    payload?.createdAt ?? payload?.created_at ?? payload?.createdDate ?? payload?.created_date;
+  const updatedAt =
+    payload?.updatedAt ?? payload?.updated_at ?? payload?.updatedDate ?? payload?.updated_date;
+  const lastMessagePayload = payload?.lastMessage ?? payload?.last_message ?? null;
+  const lastMessage =
+    typeof lastMessagePayload === 'string'
+      ? lastMessagePayload
+      : lastMessagePayload?.content ??
+        lastMessagePayload?.message ??
+        lastMessagePayload?.text ??
+        undefined;
+  const lastMessageAt =
+    payload?.lastMessageAt ??
+    payload?.last_message_at ??
+    lastMessagePayload?.createdAt ??
+    lastMessagePayload?.created_at ??
+    lastMessagePayload?.timestamp ??
+    undefined;
+
+  return {
+    id: resolvedId || '',
+    complaintId: resolvedId || undefined,
+    userId:
+      payload?.userId ??
+      payload?.user_id ??
+      payload?.customerId ??
+      payload?.customer_id ??
+      payload?.user?.id ??
+      payload?.user?.userId ??
+      '',
+    title: payload?.title ?? payload?.subject ?? payload?.name ?? 'Khiếu nại',
+    status: (payload?.status ?? 'OPEN').toString().toUpperCase(),
+    createdAt: createdAt ?? new Date().toISOString(),
+    updatedAt: updatedAt ?? undefined,
+    lastMessage,
+    lastMessageAt,
+  };
+};
+
 function useComplaintList(page: number, limit: number) {
   const apiBase = import.meta.env.VITE_API_BASE_URL;
   const [complaints, setComplaints] = useState<ComplaintData[]>([]);
@@ -3043,7 +3105,9 @@ function useComplaintList(page: number, limit: number) {
         const json = await response.json();
         const payload = json.data ?? json;
         const rawList = payload.complaints ?? payload.items ?? payload.data ?? payload.results ?? [];
-        const list = Array.isArray(rawList) ? rawList : [];
+        const list = Array.isArray(rawList)
+          ? rawList.map(normalizeComplaintListItem).filter((item) => Boolean(item.id))
+          : [];
         setComplaints(list);
         const totalItems = toNumber(payload.totalItems ?? payload.total) ?? list.length;
         const computedPages = payload.totalPages || (totalItems ? Math.max(1, Math.ceil(totalItems / limit)) : 1);
@@ -4771,32 +4835,43 @@ function ComplaintsTab() {
               </div>
             ) : (
               <div className="space-y-4">
-                {filteredComplaints.map((complaint) => (
-                  <Card key={complaint.id}>
-                    <CardContent className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <h3 className="font-medium">{complaint.title}</h3>
-                          <p className="text-sm text-gray-600">
-                            Tạo: {formatVNTime(complaint.createdAt)}
-                            {complaint.updatedAt && complaint.updatedAt !== complaint.createdAt && (
-                              <> | Cập nhật: {formatVNTime(complaint.updatedAt)}</>
+                {filteredComplaints.map((complaint) => {
+                  const resolvedId = complaint.complaintId ?? complaint.id ?? null;
+                  const cardKey = resolvedId ?? `${complaint.title}-${complaint.createdAt}`;
+                  return (
+                    <Card key={cardKey}>
+                      <CardContent className="p-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1">
+                            <h3 className="font-medium">{complaint.title}</h3>
+                            <p className="text-sm text-gray-600">
+                              Tạo: {formatVNTime(complaint.createdAt)}
+                              {complaint.updatedAt && complaint.updatedAt !== complaint.createdAt && (
+                                <> | Cập nhật: {formatVNTime(complaint.updatedAt)}</>
+                              )}
+                            </p>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            {getStatusBadge(complaint.status)}
+                            {resolvedId ? (
+                              <Link to={`/complaint/${resolvedId}`} state={{ complaint }}>
+                                <Button size="sm">
+                                  <MessageCircle className="h-4 w-4 mr-1" />
+                                  Xem chi tiết
+                                </Button>
+                              </Link>
+                            ) : (
+                              <Button size="sm" disabled title="Không tìm thấy mã khiếu nại">
+                                <MessageCircle className="h-4 w-4 mr-1" />
+                                Xem chi tiết
+                              </Button>
                             )}
-                          </p>
+                          </div>
                         </div>
-                        <div className="flex items-center space-x-2">
-                          {getStatusBadge(complaint.status)}
-                          <Link to={`/complaint/${complaint.id}`} state={{ complaint }}>
-                            <Button size="sm">
-                              <MessageCircle className="h-4 w-4 mr-1" />
-                              Xem chi tiết
-                            </Button>
-                          </Link>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
               </div>
             )}
 

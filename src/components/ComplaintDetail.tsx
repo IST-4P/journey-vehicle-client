@@ -17,6 +17,7 @@ import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Badge } from './ui/badge';
 import { Separator } from './ui/separator';
 import { ScrollArea } from './ui/scroll-area';
+import { Dialog, DialogContent } from './ui/dialog';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { toast } from 'sonner';
 import { uploadLicenseImages } from '../utils/media-upload';
@@ -32,6 +33,7 @@ type Priority = 'LOW' | 'MEDIUM' | 'HIGH' | string;
 
 interface ComplaintMessage {
   id: string;
+  complaintId?: string;
   content: string;
   messageType: 'TEXT' | 'IMAGE';
   createdAt: string;
@@ -44,6 +46,7 @@ interface ComplaintMessage {
 
 interface ComplaintData {
   id: string;
+  complaintId?: string;
   title?: string;
   description?: string;
   status: ComplaintStatus;
@@ -56,24 +59,50 @@ interface ComplaintData {
   userId?: string;
 }
 
-const normalizeComplaint = (payload: any): ComplaintData => ({
-  id: payload?.id ?? '',
-  title: payload?.title ?? payload?.subject ?? 'Khiếu nại',
-  description: payload?.description ?? payload?.content ?? '',
-  status: (payload?.status ?? 'OPEN').toString().toUpperCase(),
-  priority: payload?.priority ? payload.priority.toString().toUpperCase() : undefined,
-  category: payload?.category ?? payload?.type ?? 'Khác',
-  createdAt: payload?.createdAt ?? payload?.created_at ?? payload?.createdDate,
-  updatedAt: payload?.updatedAt ?? payload?.updated_at ?? payload?.updatedDate,
-  vehicleName: payload?.vehicleName ?? payload?.vehicle?.name,
-  bookingId: payload?.bookingId ?? payload?.bookingCode ?? payload?.booking?.id,
-  userId: payload?.userId ?? payload?.customerId ?? payload?.user?.id,
-});
+const sanitizeComplaintId = (value: unknown): string => {
+  if (value === null || value === undefined) return '';
+  const str = String(value).trim();
+  if (!str) return '';
+  const lower = str.toLowerCase();
+  if (lower === 'undefined' || lower === 'null') return '';
+  return str;
+};
+
+const normalizeComplaint = (payload: any): ComplaintData => {
+  const normalizedId = sanitizeComplaintId(
+    payload?.complaintId ?? payload?.id ?? payload?.complaint_id ?? ''
+  );
+  return {
+    id: normalizedId,
+    complaintId: normalizedId,
+    title: payload?.title ?? payload?.subject ?? 'Khiếu nại',
+    description: payload?.description ?? payload?.content ?? '',
+    status: (payload?.status ?? 'OPEN').toString().toUpperCase(),
+    priority: payload?.priority ? payload.priority.toString().toUpperCase() : undefined,
+    category: payload?.category ?? payload?.type ?? 'Khác',
+    createdAt: payload?.createdAt ?? payload?.created_at ?? payload?.createdDate,
+    updatedAt: payload?.updatedAt ?? payload?.updated_at ?? payload?.updatedDate,
+    vehicleName: payload?.vehicleName ?? payload?.vehicle?.name,
+    bookingId: payload?.bookingId ?? payload?.bookingCode ?? payload?.booking?.id,
+    userId:
+      payload?.userId ??
+      payload?.user_id ??
+      payload?.customerId ??
+      payload?.customer_id ??
+      payload?.user?.id ??
+      payload?.user?.userId,
+  };
+};
 
 const normalizeMessage = (item: any): ComplaintMessage => {
   const type = (item?.messageType ?? item?.type ?? 'TEXT').toString().toUpperCase();
   // Keep UTC time as-is from backend, will convert to VN time when displaying
   const createdAt = item?.createdAt ?? item?.created_at ?? item?.timestamp ?? new Date().toISOString();
+  const complaintId = sanitizeComplaintId(
+    item?.complaintId ?? item?.complaint_id ?? item?.complaint?.id ?? item?.complaint?.complaintId
+  );
+  const fallbackContent =
+    item?.content ?? item?.message ?? item?.text ?? item?.data?.content ?? item?.data?.message ?? '';
   const attachmentSet = new Set<string>();
 
   if (Array.isArray(item?.attachments)) {
@@ -90,7 +119,8 @@ const normalizeMessage = (item: any): ComplaintMessage => {
 
   return {
     id: item?.id ?? `${item?.senderId ?? 'msg'}-${createdAt}`,
-    content: item?.content ?? '',
+    complaintId,
+    content: fallbackContent,
     messageType: type === 'IMAGE' ? 'IMAGE' : 'TEXT',
     createdAt,
     senderId: item?.senderId ?? item?.sender_id ?? item?.userId ?? item?.createdBy,
@@ -146,7 +176,8 @@ const getStatusLabel = (status: ComplaintStatus) => {
 };
 
 export function ComplaintDetail() {
-  const { id } = useParams<{ id: string }>();
+  const { id: routeIdParam } = useParams<{ id: string }>();
+  const id = sanitizeComplaintId(routeIdParam);
   const location = useLocation();
   const routeState = (location.state as { complaint?: ComplaintData } | null) ?? null;
   const initialComplaint = routeState?.complaint ?? null;
@@ -161,11 +192,34 @@ export function ComplaintDetail() {
   const [initialMessagesLoading, setInitialMessagesLoading] = useState(true);
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [messagesError, setMessagesError] = useState<string | null>(null);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const scrollWrapperRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const shouldForceScrollBottomRef = useRef(false);
   const wsClientRef = useRef<WSClient | null>(null);
+
+  const extractComplaintId = useCallback((payload: any) => {
+    return sanitizeComplaintId(
+      payload?.complaintId ??
+        payload?.complaint_id ??
+        payload?.data?.complaintId ??
+        payload?.complaint?.id ??
+        payload?.data?.complaint_id
+    );
+  }, []);
+
+  const isComplaintSocketReady = useCallback(() => {
+    const socket = wsClientRef.current?.socket as WebSocket | { connected?: boolean } | undefined;
+    if (!socket) return false;
+    if ('readyState' in socket) {
+      return socket.readyState === WebSocket.OPEN;
+    }
+    if ('connected' in socket) {
+      return Boolean(socket.connected);
+    }
+    return false;
+  }, []);
 
   useEffect(() => {
     setComplaint(initialComplaint ?? null);
@@ -179,45 +233,86 @@ export function ComplaintDetail() {
     const wsClient = connectComplaintSocket(id, { debug: false });
     wsClientRef.current = wsClient;
 
-    // Listen for new messages
-    const unsubscribeMessage = wsClient.on('newMessage', (data: any) => {
-      const newMessage = normalizeMessage(data);
-      setMessages((prev) => {
-        // Check if message already exists
-        const exists = prev.some((msg) => msg.id === newMessage.id);
-        if (exists) return prev;
+    const handleIncomingMessage = (data: any) => {
+      const normalized = normalizeMessage(data);
+      const messageComplaintId = normalized.complaintId ?? extractComplaintId(data);
+      if (messageComplaintId && messageComplaintId !== id) return;
+      const rawPayload = (data?.data ?? data) as Record<string, any>;
+      const hasContent =
+        Boolean(rawPayload?.content && String(rawPayload.content).trim().length > 0) ||
+        Boolean(rawPayload?.message && String(rawPayload.message).trim().length > 0) ||
+        Boolean(rawPayload?.text && String(rawPayload.text).trim().length > 0) ||
+        Boolean(normalized.attachments?.length);
+      if (!hasContent) return;
 
-        // Add new message and sort by time
-        const updated = [...prev, newMessage];
+      setMessages((prev) => {
+        const updated = [...prev];
+        const optimisticIdx = updated.findIndex(
+          (msg) =>
+            msg.id.startsWith('local-') &&
+            msg.messageType === normalized.messageType &&
+            msg.content === normalized.content &&
+            (!msg.attachments || msg.attachments.join(',') === normalized.attachments?.join(','))
+        );
+        if (optimisticIdx >= 0) {
+          updated[optimisticIdx] = normalized;
+        } else if (!updated.some((msg) => msg.id === normalized.id)) {
+          updated.push(normalized);
+        }
         updated.sort(
           (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
         );
-        
+
         // Auto-scroll if near bottom
         shouldForceScrollBottomRef.current = true;
         return updated;
       });
-    });
+    };
 
-    // Listen for status updates
-    const unsubscribeStatus = wsClient.on('statusUpdate', (data: any) => {
-      if (data?.complaintId === id && data?.status) {
-        setComplaint((prev) => {
-          if (!prev) return prev;
-          return { ...prev, status: data.status };
-        });
-        toast.info(`Trạng thái khiếu nại đã được cập nhật: ${getStatusLabel(data.status)}`);
-      }
-    });
+    const handleStatusUpdate = (data: any) => {
+      const statusRaw =
+        data?.status ??
+        data?.complaintStatus ??
+        data?.complaint_status ??
+        data?.data?.status ??
+        '';
+      const normalizedStatus = statusRaw ? statusRaw.toString().toUpperCase() : '';
+      const targetComplaintId = extractComplaintId(data);
+
+      if (targetComplaintId && targetComplaintId !== id) return;
+      if (!normalizedStatus) return;
+
+      setComplaint((prev) => {
+        if (!prev) return prev;
+        return { ...prev, status: normalizedStatus };
+      });
+      toast.info(`Trạng thái khiếu nại đã được cập nhật: ${getStatusLabel(normalizedStatus)}`);
+    };
+
+    // Listen for new messages & status updates (support multiple event names)
+    const unsubscribeMessage = wsClient.on('newMessage', handleIncomingMessage);
+    const unsubscribeGeneric = wsClient.on('message', handleIncomingMessage);
+    const unsubscribeComplaintMessage = wsClient.on('complaintMessage', handleIncomingMessage);
+    const unsubscribeComplaintMessageKebab = wsClient.on('complaint-message', handleIncomingMessage);
+    const unsubscribeNewComplaintMessage = wsClient.on('newComplaintMessage', handleIncomingMessage);
+    const unsubscribeComplaint = wsClient.on('complaint', handleIncomingMessage);
+    const unsubscribeStatus = wsClient.on('statusUpdate', handleStatusUpdate);
+    const unsubscribeStatusAlias = wsClient.on('complaintStatus', handleStatusUpdate);
 
     // Cleanup on unmount
     return () => {
       unsubscribeMessage();
+      unsubscribeGeneric();
+      unsubscribeComplaintMessage();
+      unsubscribeComplaintMessageKebab();
+      unsubscribeNewComplaintMessage();
+      unsubscribeComplaint();
       unsubscribeStatus();
+      unsubscribeStatusAlias();
       wsClient.close();
       wsClientRef.current = null;
     };
-  }, [id]);
+  }, [extractComplaintId, id]);
 
   const fetchMessages = useCallback(
     async (
@@ -411,38 +506,44 @@ export function ComplaintDetail() {
   }, [messages, scrollToBottom]);
 
   const sendComplaintMessage = useCallback(
-    async (body: { content: string; messageType: 'TEXT' | 'IMAGE' }) => {
-      if (!id || !API_BASE_URL) {
+    async (body: { content: string; messageType: 'TEXT' | 'IMAGE' }): Promise<ComplaintMessage | null> => {
+      if (!id) {
         throw new Error('Không xác định được khiếu nại');
       }
 
-      const res = await fetch(`${API_BASE_URL}/complaint-message`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          ...getAuthHeaders(),
-        },
-        body: JSON.stringify({
-          complaintId: id,
-          messageType: body.messageType,
-          content: body.content,
-        }),
-      });
+      const payload = {
+        complaintId: id,
+        messageType: body.messageType,
+        content: body.content,
+      };
 
-      const json = await res.json().catch(() => null);
-      if (!res.ok) {
-        throw new Error(json?.message || 'Không thể gửi tin nhắn');
+      const wsClient = wsClientRef.current;
+      if (!wsClient || !isComplaintSocketReady()) {
+        throw new Error('Kết nối realtime chưa sẵn sàng, vui lòng thử lại.');
       }
 
-      const payload = json?.data ?? json?.message ?? json;
-      return normalizeMessage(payload);
-    },
-    [id]
+      try {
+        wsClient.send(payload);
+        // Optimistic local message so UI updates immediately; server echo will dedupe by id/content
+        const optimistic = normalizeMessage({
+          ...payload,
+          id: `local-${Date.now()}`,
+          createdAt: new Date().toISOString(),
+          senderId: complaint?.userId,
+          senderType: 'USER',
+        });
+        return optimistic;
+      } catch (error) {
+        console.error('WebSocket gửi tin nhắn khiếu nại lỗi:', error);
+        throw error instanceof Error ? error : new Error('Không thể gửi tin nhắn qua realtime');
+      }
+
+      },
+    [complaint?.userId, id, isComplaintSocketReady]
   );
 
   const handleSendReply = async () => {
+    if (sending) return;
     if (!replyContent.trim() && attachments.length === 0) {
       toast.error('Vui lòng nhập nội dung hoặc chọn ảnh đính kèm');
       return;
@@ -457,7 +558,9 @@ export function ComplaintDetail() {
           content: replyContent.trim(),
           messageType: 'TEXT',
         });
-        newMessages.push(message);
+        if (message) {
+          newMessages.push(message);
+        }
       }
 
       if (attachments.length) {
@@ -467,7 +570,9 @@ export function ComplaintDetail() {
             content: url,
             messageType: 'IMAGE',
           });
-          newMessages.push(imageMessage);
+          if (imageMessage) {
+            newMessages.push(imageMessage);
+          }
         }
       }
 
@@ -538,6 +643,20 @@ export function ComplaintDetail() {
           </Button>
         </Link>
       </div>
+
+      <Dialog open={Boolean(previewImage)} onOpenChange={(open) => !open && setPreviewImage(null)}>
+        <DialogContent className="max-w-5xl w-full">
+          {previewImage && (
+            <div className="flex justify-center">
+              <img
+                src={previewImage}
+                alt="Xem ảnh đầy đủ"
+                className="max-h-[80vh] w-auto object-contain"
+              />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
@@ -658,6 +777,7 @@ export function ComplaintDetail() {
                                         src={attachment}
                                         alt={`Attachment ${idx + 1}`}
                                         className="w-full h-24 object-cover rounded cursor-pointer hover:opacity-90"
+                                        onClick={() => setPreviewImage(attachment)}
                                       />
                                     ))}
                                   </div>
@@ -676,50 +796,45 @@ export function ComplaintDetail() {
 
               {!isClosed && (
                 <div className="p-4">
-                  <div className="space-y-4">
-                    <div>
-                      <Label htmlFor="reply">Phản hồi của bạn</Label>
+                  <div className="space-y-3">
+                    <div className="text-sm font-medium text-gray-800">Phản hồi của bạn</div>
+                    <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-full px-3 py-2 shadow-sm">
+                      <input
+                        type="file"
+                        multiple
+                        accept="image/*"
+                        onChange={handleFileUpload}
+                        className="hidden"
+                        id="file-upload"
+                      />
+                      <Label htmlFor="file-upload" className="cursor-pointer flex-shrink-0">
+                        <Paperclip className="h-5 w-5 text-gray-500 hover:text-gray-700" />
+                      </Label>
                       <Textarea
                         id="reply"
                         value={replyContent}
                         onChange={(e) => setReplyContent(e.target.value)}
-                        placeholder="Nhập phản hồi của bạn..."
-                        rows={3}
-                        className="mt-1"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            handleSendReply();
+                          }
+                        }}
+                        placeholder="Nhập tin nhắn trả lời..."
+                        rows={1}
+                        className="flex-1 resize-none border-none bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 px-2 py-1 text-sm"
                       />
-                    </div>
-
-                    <div className="flex items-center space-x-4">
-                      <div>
-                        <input
-                          type="file"
-                          multiple
-                          accept="image/*"
-                          onChange={handleFileUpload}
-                          className="hidden"
-                          id="file-upload"
-                        />
-                        <Label htmlFor="file-upload" className="cursor-pointer">
-                          <Button variant="outline" size="sm" asChild>
-                            <span>
-                              <Paperclip className="h-4 w-4 mr-2" />
-                              Đính kèm file
-                            </span>
-                          </Button>
-                        </Label>
-                      </div>
-
-                      <Button onClick={handleSendReply} disabled={sending}>
+                      <Button
+                        size="icon"
+                        className="h-9 w-9 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600"
+                        onClick={handleSendReply}
+                        disabled={sending || (!replyContent.trim() && attachments.length === 0)}
+                        title="Gửi phản hồi"
+                      >
                         {sending ? (
-                          <div className="flex items-center">
-                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                            Đang gửi...
-                          </div>
+                          <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
-                          <>
-                            <Send className="h-4 w-4 mr-2" />
-                            Gửi phản hồi
-                          </>
+                          <Send className="h-4 w-4" />
                         )}
                       </Button>
                     </div>
@@ -729,15 +844,16 @@ export function ComplaintDetail() {
                         {attachments.map((file, index) => (
                           <div
                             key={`${file.name}-${index}`}
-                            className="flex items-center space-x-2 bg-gray-100 px-3 py-1 rounded"
+                            className="flex items-center space-x-2 bg-gray-100 px-3 py-1 rounded-full text-sm"
                           >
-                            <ImageIcon className="h-4 w-4" />
-                            <span className="text-sm">{file.name}</span>
+                            <ImageIcon className="h-4 w-4 text-gray-500" />
+                            <span className="text-gray-700">{file.name}</span>
                             <button
                               onClick={() =>
                                 setAttachments((prev) => prev.filter((_, i) => i !== index))
                               }
                               className="text-red-500 hover:text-red-700"
+                              aria-label="Xóa file đính kèm"
                             >
                               ×
                             </button>
@@ -760,7 +876,9 @@ export function ComplaintDetail() {
             <CardContent className="space-y-4">
               <div>
                 <Label className="text-sm font-medium">Mã khiếu nại</Label>
-                <p className="text-sm text-gray-600 mt-1">#{complaint.id}</p>
+                <p className="text-sm text-gray-600 mt-1">
+                  #{complaint.id || complaint.complaintId || '—'}
+                </p>
               </div>
 
               <div>

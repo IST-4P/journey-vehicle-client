@@ -14,14 +14,27 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
-import { convertUTCToVN, formatVNDate, formatRelativeTime } from "../utils/timezone";
+import { convertUTCToVN, formatRelativeTime } from "../utils/timezone";
+import { uploadLicenseImages } from "../utils/media-upload";
+
+const sanitizeId = (value: unknown): string => {
+  if (value === null || value === undefined) return "";
+  const str = String(value).trim();
+  if (!str) return "";
+  const lower = str.toLowerCase();
+  if (lower === "undefined" || lower === "null") return "";
+  return str;
+};
 
 interface ComplaintSummary {
-  id: string;
+  complaintId: string;
+  userId: string;
   title: string;
   status: string;
   createdAt: string;
   updatedAt?: string;
+  lastMessage?: string;
+  lastMessageAt?: string;
 }
 
 interface ComplaintMessage {
@@ -32,10 +45,121 @@ interface ComplaintMessage {
   attachments?: string[];
 }
 
+const DEFAULT_COMPLAINT_PAGE_LIMIT = 20;
+
+const normalizeComplaintSummary = (payload: any): ComplaintSummary => {
+  const rawId =
+    payload?.complaintId ?? payload?.complaint_id ?? payload?.id ?? payload?.cId ?? "";
+  const complaintId = sanitizeId(rawId);
+  const lastMessagePayload = payload?.lastMessage ?? payload?.last_message ?? null;
+  const lastMessage =
+    typeof lastMessagePayload === "string"
+      ? lastMessagePayload
+      : lastMessagePayload?.content ??
+        lastMessagePayload?.message ??
+        lastMessagePayload?.text ??
+        undefined;
+  const lastMessageAt =
+    payload?.lastMessageAt ??
+    payload?.last_message_at ??
+    lastMessagePayload?.createdAt ??
+    lastMessagePayload?.created_at ??
+    lastMessagePayload?.timestamp ??
+    payload?.updatedAt ??
+    payload?.updated_at ??
+    undefined;
+
+  const fallbackCreatedAt =
+    payload?.createdAt ??
+    payload?.created_at ??
+    payload?.createdDate ??
+    payload?.created_date ??
+    new Date().toISOString();
+
+  const resolvedComplaintId =
+    complaintId ||
+    sanitizeId(payload?.id ?? payload?.complaint_id ?? payload?.cId ?? payload?.complaintCode);
+
+  return {
+    complaintId: resolvedComplaintId,
+    userId:
+      payload?.userId ??
+      payload?.user_id ??
+      payload?.customerId ??
+      payload?.customer_id ??
+      payload?.user?.id ??
+      payload?.user?.userId ??
+      "",
+    title: payload?.title ?? payload?.subject ?? payload?.name ?? "Khiếu nại",
+    status: (payload?.status ?? "OPEN").toString().toUpperCase(),
+    createdAt: fallbackCreatedAt,
+    updatedAt: payload?.updatedAt ?? payload?.updated_at ?? payload?.updatedDate,
+    lastMessage: lastMessage,
+    lastMessageAt: lastMessageAt,
+  };
+};
+
+const normalizeComplaintMessage = (
+  payload: any,
+  complaintUserId?: string
+): ComplaintMessage | null => {
+  if (!payload) {
+    return null;
+  }
+
+  const createdAt =
+    payload?.createdAt ?? payload?.created_at ?? payload?.timestamp ?? new Date().toISOString();
+  const senderId =
+    payload?.senderId ??
+    payload?.sender_id ??
+    payload?.userId ??
+    payload?.user_id ??
+    payload?.createdBy ??
+    payload?.sender?.id;
+  const senderType = (
+    payload?.senderType ??
+    payload?.sender_type ??
+    payload?.role ??
+    payload?.sender?.role ??
+    ""
+  )
+    .toString()
+    .toUpperCase();
+  const isUser =
+    complaintUserId && senderId
+      ? complaintUserId === senderId
+      : senderType === "USER" || senderType === "CUSTOMER";
+  const messageType = (payload?.messageType ?? payload?.type ?? "TEXT").toString().toUpperCase();
+  const attachments = new Set<string>();
+
+  if (Array.isArray(payload?.attachments)) {
+    payload.attachments.filter(Boolean).forEach((url: string) => attachments.add(url));
+  }
+  if (Array.isArray(payload?.metadata?.attachments)) {
+    payload.metadata.attachments.filter(Boolean).forEach((url: string) => attachments.add(url));
+  }
+  if (messageType === "IMAGE" && payload?.content) {
+    attachments.add(payload.content);
+  }
+
+  const textContent =
+    messageType === "IMAGE" && attachments.size
+      ? "Đã gửi một hình ảnh"
+      : payload?.content ?? payload?.message ?? "";
+
+  return {
+    id: payload?.id ?? `${senderId ?? "msg"}-${createdAt}`,
+    content: textContent,
+    sender: isUser ? "user" : "admin",
+    createdAt,
+    attachments: attachments.size ? Array.from(attachments) : undefined,
+  };
+};
+
 export function Complaint() {
   const navigate = useNavigate();
   const apiBase =
-    import.meta?.env?.VITE_API_BASE_URL || "http://localhost:3000/api";
+    import.meta?.env?.VITE_API_BASE_URL;
   const [complaints, setComplaints] = useState<ComplaintSummary[]>([]);
   const [listLoading, setListLoading] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -56,117 +180,122 @@ export function Complaint() {
   }, []);
 
   const selectedComplaint = useMemo(
-    () => complaints.find((item) => item.id === selectedId) ?? null,
+    () => complaints.find((item) => item.complaintId === selectedId) ?? null,
     [complaints, selectedId]
   );
 
+  const fetchComplaintList = useCallback(
+    async (options?: { signal?: AbortSignal }) => {
+      if (!apiBase) {
+        toast.error("Chưa cấu hình API");
+        setComplaints([]);
+        setSelectedId(null);
+        setListLoading(false);
+        return;
+      }
+
+      setListLoading(true);
+      try {
+        const url = new URL(`${apiBase}/complaint`);
+        url.searchParams.set("page", "1");
+        url.searchParams.set("limit", DEFAULT_COMPLAINT_PAGE_LIMIT.toString());
+
+        const response = await fetch(url.toString(), {
+          method: "GET",
+          credentials: "include",
+          signal: options?.signal,
+        });
+
+        const body = await response.json().catch(() => null);
+        if (!response.ok) {
+          throw new Error(body?.message || "Không thể tải danh sách khiếu nại");
+        }
+
+        const payload = body?.data ?? body;
+        const rawList =
+          payload?.complaints ?? payload?.items ?? payload?.data ?? payload?.results ?? [];
+        const normalized = Array.isArray(rawList)
+          ? rawList
+              .map(normalizeComplaintSummary)
+              .filter((item: ComplaintSummary) => Boolean(item.complaintId))
+          : [];
+
+        setComplaints(normalized);
+        setSelectedId((prev) => {
+          if (prev && normalized.some((item) => item.complaintId === prev)) {
+            return prev;
+          }
+          return normalized[0]?.complaintId ?? null;
+        });
+      } catch (error) {
+        if (options?.signal?.aborted) return;
+        console.error("Fetch complaints error:", error);
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Không thể tải danh sách khiếu nại. Vui lòng thử lại."
+        );
+        setComplaints([]);
+        setSelectedId(null);
+      } finally {
+        if (!options?.signal?.aborted) {
+          setListLoading(false);
+        }
+      }
+    },
+    [apiBase]
+  );
+
   useEffect(() => {
-    fetchComplaints();
-  }, []);
-
-  const fetchComplaints = useCallback(async () => {
-    setListLoading(true);
-    // Mock data - không gọi API
-    await new Promise((resolve) => setTimeout(resolve, 500)); // Giả lập loading
-
-    const mockComplaints: ComplaintSummary[] = [
-      {
-        id: "complaint-1",
-        title: "Cần hỗ trợ về việc thuê xe Honda SH 150i",
-        status: "OPEN",
-        createdAt: new Date(Date.now() - 3600000 * 24).toISOString(),
-      },
-      {
-        id: "complaint-2",
-        title: "Xe Yamaha Exciter bị hỏng giữa đường",
-        status: "RESOLVED",
-        createdAt: new Date(Date.now() - 3600000 * 48).toISOString(),
-      },
-      {
-        id: "complaint-3",
-        title: "Hỏi về chính sách hoàn tiền đặt cọc",
-        status: "OPEN",
-        createdAt: new Date(Date.now() - 3600000 * 72).toISOString(),
-      },
-      {
-        id: "complaint-4",
-        title: "Muốn đổi xe từ Wave Alpha sang Winner X",
-        status: "CLOSED",
-        createdAt: new Date(Date.now() - 3600000 * 96).toISOString(),
-      },
-      {
-        id: "complaint-5",
-        title: "Không nhận được xác nhận đơn hàng #789",
-        status: "OPEN",
-        createdAt: new Date(Date.now() - 3600000 * 120).toISOString(),
-      },
-      {
-        id: "complaint-6",
-        title: "Xe Vision bị thủng lốp, cần hỗ trợ khẩn cấp",
-        status: "RESOLVED",
-        createdAt: new Date(Date.now() - 3600000 * 144).toISOString(),
-      },
-      {
-        id: "complaint-7",
-        title: "Hỏi về combo thuê xe + khách sạn tại Đà Nẵng",
-        status: "OPEN",
-        createdAt: new Date(Date.now() - 3600000 * 168).toISOString(),
-      },
-      {
-        id: "complaint-8",
-        title: "Cần thay đổi thời gian nhận xe",
-        status: "RESOLVED",
-        createdAt: new Date(Date.now() - 3600000 * 192).toISOString(),
-      },
-      {
-        id: "complaint-9",
-        title: "Thanh toán bị lỗi, tiền đã trừ nhưng chưa có xe",
-        status: "OPEN",
-        createdAt: new Date(Date.now() - 3600000 * 216).toISOString(),
-      },
-      {
-        id: "complaint-10",
-        title: "Xe PCX 160 đã thuê không giống hình ảnh",
-        status: "CLOSED",
-        createdAt: new Date(Date.now() - 3600000 * 240).toISOString(),
-      },
-      {
-        id: "complaint-11",
-        title: "Muốn gia hạn thêm 3 ngày thuê xe",
-        status: "RESOLVED",
-        createdAt: new Date(Date.now() - 3600000 * 264).toISOString(),
-      },
-      {
-        id: "complaint-12",
-        title: "Hỏi về bảo hiểm khi thuê xe dài hạn",
-        status: "OPEN",
-        createdAt: new Date(Date.now() - 3600000 * 288).toISOString(),
-      },
-    ];
-
-    setComplaints(mockComplaints);
-    setListLoading(false);
-  }, []);
+    const controller = new AbortController();
+    fetchComplaintList({ signal: controller.signal });
+    return () => controller.abort();
+  }, [fetchComplaintList]);
 
   const handleCreateComplaint = async () => {
     if (!newTitle.trim()) return;
+    if (!apiBase) {
+      toast.error("Chưa cấu hình API");
+      return;
+    }
     setCreating(true);
 
-    // Mock create - không gọi API
-    await new Promise((resolve) => setTimeout(resolve, 300)); // Giả lập loading
+    try {
+      const response = await fetch(`${apiBase}/complaint`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ title: newTitle.trim() }),
+      });
 
-    const newComplaint: ComplaintSummary = {
-      id: `complaint-${Date.now()}`,
-      title: newTitle.trim(),
-      status: "OPEN",
-      createdAt: new Date().toISOString(),
-    };
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(body?.message || "Không thể tạo khiếu nại");
+      }
 
-    setComplaints((prev) => [newComplaint, ...prev]);
-    setSelectedId(newComplaint.id);
-    setNewTitle("");
-    toast.success("Đã tạo khiếu nại");
-    setCreating(false);
+      const payload = body?.data ?? body;
+      const normalized = normalizeComplaintSummary(payload);
+      setComplaints((prev) => {
+        const remaining = prev.filter(
+          (item) => item.complaintId !== normalized.complaintId
+        );
+        return [normalized, ...remaining];
+      });
+      setSelectedId(normalized.complaintId);
+      setNewTitle("");
+      toast.success("Đã tạo khiếu nại");
+    } catch (error) {
+      console.error("Create complaint error:", error);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Không thể tạo khiếu nại. Vui lòng thử lại."
+      );
+    } finally {
+      setCreating(false);
+    }
   };
 
   const handleSelectComplaint = (complaintId: string) => {
@@ -331,9 +460,9 @@ export function Complaint() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={fetchComplaints}
                     disabled={listLoading}
                     className="h-8 w-8 p-0 hover:bg-gray-100 rounded-full"
+                    onClick={() => fetchComplaintList()}
                     title="Làm mới danh sách"
                   >
                     <span className="text-lg">{listLoading ? "⟳" : "↻"}</span>
@@ -446,12 +575,12 @@ function ComplaintList({
     <div className="space-y-2">
       {complaints.map((item) => {
         const statusBadge = getStatusBadge(item.status);
-        const isSelected = selectedId === item.id;
+        const isSelected = selectedId === item.complaintId;
 
         return (
           <button
-            key={item.id}
-            onClick={() => onSelectComplaint(item.id)}
+            key={item.complaintId}
+            onClick={() => onSelectComplaint(item.complaintId)}
             className={`
               w-full p-4 rounded-xl text-left transition-all duration-200
               ${
@@ -479,6 +608,16 @@ function ComplaintList({
             >
               {item.title}
             </p>
+            {item.lastMessage && (
+              <p className="text-xs text-gray-500 mt-1 line-clamp-2">
+                {item.lastMessage}
+              </p>
+            )}
+            {item.lastMessageAt && (
+              <p className="text-[11px] text-gray-400 mt-1">
+                {formatDate(item.lastMessageAt)}
+              </p>
+            )}
           </button>
         );
       })}
@@ -514,34 +653,92 @@ function ComplaintChat({
     scrollToBottom();
   }, [messages]);
 
+  const fetchMessages = useCallback(async () => {
+    const complaintId = sanitizeId(complaint?.complaintId);
+    if (!apiBase || !complaintId) {
+      setMessages([]);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const url = new URL(`${apiBase}/complaint-message`);
+      url.searchParams.set("complaintId", complaintId);
+      url.searchParams.set("page", "1");
+      url.searchParams.set("limit", "50");
+
+      const response = await fetch(url.toString(), {
+        method: "GET",
+        credentials: "include",
+      });
+
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(body?.message || "Không thể tải tin nhắn");
+      }
+
+      const payload = body?.data ?? body;
+      const rawList =
+        payload?.complaintMessages ?? payload?.items ?? payload?.data ?? payload?.results ?? [];
+      const normalized = Array.isArray(rawList)
+        ? rawList
+            .map((item: any) => normalizeComplaintMessage(item, complaint.userId))
+            .filter((item): item is ComplaintMessage => Boolean(item?.id))
+        : [];
+      normalized.sort(
+        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      );
+      setMessages(normalized);
+    } catch (error) {
+      console.error("Fetch complaint messages error:", error);
+      toast.error(
+        error instanceof Error ? error.message : "Không thể tải tin nhắn. Vui lòng thử lại."
+      );
+      setMessages([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [apiBase, complaint.complaintId, complaint.userId]);
+
   useEffect(() => {
     fetchMessages();
-  }, [complaint.id]);
+  }, [fetchMessages]);
 
-  const fetchMessages = async () => {
-    setLoading(true);
-    // Mock data
-    await new Promise((resolve) => setTimeout(resolve, 300));
+  const sendComplaintMessage = useCallback(
+    async (content: string, messageType: "TEXT" | "IMAGE") => {
+      const complaintId = sanitizeId(complaint?.complaintId);
+      if (!apiBase || !complaintId) {
+        throw new Error("Không xác định được khiếu nại");
+      }
 
-    const mockMessages: ComplaintMessage[] = [
-      {
-        id: "msg-1",
-        content: "Xin chào! Tôi cần hỗ trợ về việc thuê xe máy.",
-        sender: "user",
-        createdAt: new Date(Date.now() - 3600000 * 24).toISOString(),
-      },
-      {
-        id: "msg-2",
-        content:
-          "Chào bạn! Cảm ơn bạn đã liên hệ. Đội ngũ hỗ trợ của chúng tôi sẽ giúp bạn ngay. Bạn gặp vấn đề gì với việc thuê xe?",
-        sender: "admin",
-        createdAt: new Date(Date.now() - 3600000 * 23.5).toISOString(),
-      },
-    ];
+      const response = await fetch(`${apiBase}/complaint-message`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          complaintId,
+          messageType,
+          content,
+        }),
+      });
 
-    setMessages(mockMessages);
-    setLoading(false);
-  };
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(body?.message || "Không thể gửi tin nhắn");
+      }
+
+      const payload = body?.data ?? body;
+      const normalized = normalizeComplaintMessage(payload, complaint.userId);
+      if (!normalized) {
+        throw new Error("Không thể xác định tin nhắn vừa gửi");
+      }
+      return normalized;
+    },
+    [apiBase, complaint.complaintId, complaint.userId]
+  );
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -587,39 +784,51 @@ function ComplaintChat({
   const handleSend = async () => {
     const text = input.trim();
     if (!text && selectedImages.length === 0) return;
+    if (!apiBase || !complaint?.complaintId) {
+      toast.error("Không xác định được khiếu nại");
+      return;
+    }
 
-    const messageText =
-      text ||
-      (selectedImages.length > 0
-        ? `[Đã gửi ${selectedImages.length} ảnh]`
-        : "");
-
-    setInput("");
     setSending(true);
+    try {
+      const newMessages: ComplaintMessage[] = [];
 
-    const newMessage: ComplaintMessage = {
-      id: `msg-${Date.now()}`,
-      content: messageText,
-      sender: "user",
-      createdAt: new Date().toISOString(),
-    };
-    setMessages((prev) => [...prev, newMessage]);
+      if (text) {
+        const message = await sendComplaintMessage(text, "TEXT");
+        newMessages.push(message);
+      }
 
-    setSelectedImages([]);
-    setImagePreviewUrls([]);
+      if (selectedImages.length) {
+        const uploaded = await uploadLicenseImages(selectedImages);
+        for (const url of uploaded) {
+          const imageMessage = await sendComplaintMessage(url, "IMAGE");
+          newMessages.push(imageMessage);
+        }
+      }
 
-    setTimeout(() => {
-      const adminReply: ComplaintMessage = {
-        id: `msg-${Date.now()}-admin`,
-        content:
-          "Cảm ơn bạn đã liên hệ! Chúng tôi đã nhận được tin nhắn và sẽ phản hồi trong thời gian sớm nhất. 🙏",
-        sender: "admin",
-        createdAt: new Date().toISOString(),
-      };
-      setMessages((prev) => [...prev, adminReply]);
-    }, 1500);
+      if (newMessages.length) {
+        setMessages((prev) => {
+          const merged = [...prev, ...newMessages];
+          merged.sort(
+            (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          );
+          return merged;
+        });
+      }
 
-    setSending(false);
+      setInput("");
+      setSelectedImages([]);
+      setImagePreviewUrls([]);
+    } catch (error) {
+      console.error("Send complaint message error:", error);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Không thể gửi tin nhắn. Vui lòng thử lại."
+      );
+    } finally {
+      setSending(false);
+    }
   };
 
   return (

@@ -258,8 +258,20 @@ export function connectPaymentSocket(options?: { debug?: boolean }) {
 }
 
 export function connectComplaintSocket(complaintId: string, options?: { debug?: boolean }) {
-  return createSocketIoClient('/complaint', {
+  const client = createSocketIoClient('/complaint', {
     debug: options?.debug,
     query: { complaintId },
   });
+
+  // Override send to emit the correct event for complaint messages
+  return {
+    ...client,
+    send(payload: any) {
+      if (client.socket && 'emit' in client.socket && typeof (client.socket as any).emit === 'function') {
+        (client.socket as any).emit('sendComplaintMessage', payload);
+      } else {
+        client.send(payload);
+      }
+    },
+  };
 }
