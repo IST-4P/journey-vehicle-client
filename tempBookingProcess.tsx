@@ -210,8 +210,6 @@ export function BookingProcess() {
         notes: `Thuê xe ${bookingData.vehicle.name} - ${bookingData.vehicle.type === 'CAR' ? 'Ô tô' : 'Xe máy'}`
       };
 
-      console.log('Creating booking with payload:', bookingPayload);
-
       const response = await fetch(
         `${import.meta.env.VITE_API_BASE_URL}/booking`,
         {
@@ -226,7 +224,6 @@ export function BookingProcess() {
 
       if (response.ok) {
         const bookingResult = await response.json();
-        console.log('Booking created successfully:', bookingResult);
         return bookingResult;
       } else {
         const errorData = await response.json();

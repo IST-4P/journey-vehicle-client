@@ -238,14 +238,9 @@ export function ChatWidget() {
     const success = await refreshAccessToken();
     if (success) {
       const token = getStoredAccessToken();
-      console.log(
-        "[ChatWidget] Support click - got token:",
-        token ? "Token exists" : "No token"
-      );
       setAccessToken(token);
       setStage("chat");
     } else {
-      console.log("[ChatWidget] Support click - no valid session, show login");
       setStage("login");
     }
     setIsAuthChecking(false);
@@ -257,15 +252,10 @@ export function ChatWidget() {
     const handleStorage = (e: StorageEvent) => {
       if (e.key === "accessToken") {
         const newToken = e.newValue;
-        console.log(
-          "[ChatWidget] Storage changed:",
-          newToken ? "Token exists" : "Token removed"
-        );
         setAccessToken(newToken);
       }
       // FIX: Lắng nghe cookieAuth flag
       if (e.key === "cookieAuth" && e.newValue === "true") {
-        console.log("[ChatWidget] Cookie-based auth detected");
         setAccessToken("COOKIE_AUTH"); // Special marker
       }
     };
@@ -274,10 +264,6 @@ export function ChatWidget() {
     const handleTokenChanged = (event: Event) => {
       const customEvent = event as CustomEvent;
       const token = customEvent?.detail?.token ?? null;
-      console.log(
-        "[ChatWidget] AccessTokenChanged event fired:",
-        token ? "Token exists" : "Token removed"
-      );
       setAccessToken(token);
     };
 
@@ -286,13 +272,10 @@ export function ChatWidget() {
     const cookieAuth = localStorage.getItem("cookieAuth");
 
     if (cookieAuth === "true") {
-      console.log("[ChatWidget] Initial check: Cookie-based auth detected");
       setAccessToken("COOKIE_AUTH");
     } else if (token) {
-      console.log("[ChatWidget] Initial token check: Token exists");
       setAccessToken(token);
     } else {
-      console.log("[ChatWidget] Initial token check: No token");
     }
 
     window.addEventListener("storage", handleStorage);

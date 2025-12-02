@@ -42,6 +42,13 @@ const inferBrandFromName = (name?: string) => {
   return firstWord || undefined;
 };
 
+const formatStatusLabel = (status?: string) => {
+  const normalized = status?.toUpperCase();
+  if (normalized === "AVAILABLE") return "Còn hàng";
+  if (normalized === "UNAVAILABLE") return "Hết hàng";
+  return status || "";
+};
+
 export function EquipmentRental() {
   const [equipment, setEquipment] = useState<Equipment[]>([]);
   const [filteredEquipment, setFilteredEquipment] = useState<Equipment[]>([]);
@@ -97,8 +104,10 @@ export function EquipmentRental() {
         quantity: device.quantity ?? 0,
         status: device.status,
         images: Array.isArray(device.images) ? device.images : [],
-        rating: device.rating ?? 4.8,
-        reviewCount: device.reviewCount ?? 0,
+        rating: Number(device.averageRating ?? device.rating ?? 0) || 0,
+        reviewCount: Array.isArray(device.reviewIds)
+          ? device.reviewIds.filter((id: string) => id && id !== "NULL").length
+          : device.reviewCount ?? 0,
       }));
 
       setEquipment(normalized);
@@ -331,7 +340,7 @@ export function EquipmentRental() {
                           <SelectItem value={ALL_OPTION_VALUE}>Tất cả</SelectItem>
                           {uniqueStatuses.map((status) => (
                             <SelectItem key={status} value={status}>
-                              {status}
+                              {formatStatusLabel(status)}
                             </SelectItem>
                           ))}
                         </>

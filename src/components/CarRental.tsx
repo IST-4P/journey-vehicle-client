@@ -92,50 +92,6 @@ export function CarRental({ vehicleType = 'CAR' }: CarRentalProps) {
 
   const itemsPerPage = 12;
 
-  // Fetch reviews for all cars
-  useEffect(() => {
-    const fetchReviewsForCars = async () => {
-      if (filteredCars.length === 0 || filteredCars[0]?.actualRating !== undefined) return;
-
-      const carsWithReviews = await Promise.all(
-        filteredCars.map(async (car) => {
-          try {
-            const response = await fetch(
-              `${import.meta.env.VITE_API_BASE_URL}/review/vehicle/${car.id}`,
-              { credentials: 'include' }
-            );
-
-            if (response.ok) {
-              const data = await response.json();
-              const reviews = data.data?.reviews || [];
-
-              if (reviews.length > 0) {
-                const avgRating = reviews.reduce((sum: number, r: any) => sum + r.rating, 0) / reviews.length;
-                return {
-                  ...car,
-                  actualRating: Number(avgRating.toFixed(1)),
-                  reviewCount: reviews.length
-                };
-              }
-            }
-          } catch (error) {
-            console.error(`Error fetching reviews for car ${car.id}:`, error);
-          }
-
-          return {
-            ...car,
-            actualRating: car.averageRating,
-            reviewCount: 0
-          };
-        })
-      );
-
-      setFilteredCars(carsWithReviews);
-    };
-
-    fetchReviewsForCars();
-  }, [filteredCars.length, currentPage]); // Refetch when page or car count changes
-
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
@@ -699,9 +655,9 @@ export function CarRental({ vehicleType = 'CAR' }: CarRentalProps) {
                   <div className="flex items-center mb-2">
                     <div className="flex items-center">
                       <Star className="h-4 w-4 text-yellow-400 fill-current mr-1" />
-                      <span className="text-sm font-medium">{car.actualRating ?? car.averageRating ?? 0}</span>
+                      <span className="text-sm font-medium">{car.averageRating ?? 0}</span>
                       <span className="text-sm text-gray-600 ml-1">
-                        ({car.reviewCount !== undefined ? `${car.reviewCount} đánh giá` : `${car.totalTrips} chuyến`})
+                        ({car.reviewCount ?? 0} đánh giá)
                       </span>
                     </div>
                   </div>

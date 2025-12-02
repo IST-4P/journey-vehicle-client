@@ -134,6 +134,7 @@ export function VehicleDetail() {
   const [priceLoading, setPriceLoading] = useState(false);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [activeReviewImage, setActiveReviewImage] = useState<string | null>(null);
 
   // Helper function to check if vehicle is available
   const isVehicleAvailable = (status: string | undefined) => {
@@ -205,11 +206,8 @@ export function VehicleDetail() {
           }
         );
 
-        console.log('[VehicleDetail] Reviews response status:', response.status);
-
         if (response.ok) {
           const payload: ReviewsResponse = await response.json();
-          console.log('[VehicleDetail] Reviews payload:', payload);
 
           if (payload.data && Array.isArray(payload.data.reviews)) {
             setReviews(payload.data.reviews);
@@ -718,14 +716,20 @@ export function VehicleDetail() {
                           {review.content}
                         </p>
                         {review.images && review.images.length > 0 && (
-                          <div className="grid grid-cols-3 gap-2 mt-3">
+                          <div className="grid grid-cols-3 gap-2 mt-3 max-h-40 overflow-y-auto">
                             {review.images.map((image, idx) => (
-                              <ImageWithFallback
+                              <button
                                 key={idx}
-                                src={image}
-                                alt={`Review image ${idx + 1}`}
-                                className="w-full h-24 object-cover rounded-lg"
-                              />
+                                type="button"
+                                onClick={() => setActiveReviewImage(image)}
+                                className="focus:outline-none"
+                              >
+                                <ImageWithFallback
+                                  src={image}
+                                  alt={`Review image ${idx + 1}`}
+                                  className="w-full h-20 object-cover rounded-lg border"
+                                />
+                              </button>
                             ))}
                           </div>
                         )}
@@ -1109,6 +1113,23 @@ export function VehicleDetail() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Review Image Lightbox */}
+      {activeReviewImage && (
+        <div className="fixed inset-0 z-50 bg-black bg-opacity-80 flex items-center justify-center p-4">
+          <button
+            onClick={() => setActiveReviewImage(null)}
+            className="absolute top-4 right-4 text-white hover:text-gray-200"
+          >
+            <X className="h-8 w-8" />
+          </button>
+          <ImageWithFallback
+            src={activeReviewImage}
+            alt="Review full"
+            className="max-h-full max-w-full object-contain rounded-lg shadow-2xl"
+          />
+        </div>
+      )}
 
       </div>
     </>

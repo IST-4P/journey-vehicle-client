@@ -1,4 +1,4 @@
-import { ChevronDown, Filter, Package2, Star } from "lucide-react";
+import { Filter, Package2, Star } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
@@ -18,10 +18,11 @@ import { Separator } from "./ui/separator";
 interface Combo {
   id: string;
   name: string;
-  pricePerHour: number;
+  pricePerDay: number;
   description?: string;
   images?: string[];
   deviceCount: number;
+  quantity: number;
   devices: Array<{ name: string; quantity: number }>;
   rating: number;
   reviewCount: number;
@@ -31,7 +32,6 @@ export function ComboRental() {
   const [combos, setCombos] = useState<Combo[]>([]);
   const [filteredCombos, setFilteredCombos] = useState<Combo[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showFilters, setShowFilters] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
 
@@ -76,17 +76,20 @@ export function ComboRental() {
         id: combo.id,
         name: combo.name,
         description: combo.description,
-        pricePerHour: Number(combo.price) || 0,
+        pricePerDay: Number(combo.price) || 0,
         images: Array.isArray(combo.images) ? combo.images : [],
         deviceCount: Array.isArray(combo.devices) ? combo.devices.length : 0,
+        quantity: Number(combo.quantity) || 0,
         devices: Array.isArray(combo.devices)
           ? combo.devices.map((device: any) => ({
               name: device.name || "",
               quantity: device.quantity || 1,
             }))
           : [],
-        rating: combo.rating ?? 4.8,
-        reviewCount: combo.reviewCount ?? 0,
+        rating: Number(combo.averageRating ?? combo.rating ?? 0) || 0,
+        reviewCount: Array.isArray(combo.reviewIds)
+          ? combo.reviewIds.filter((id: string) => id && id !== "NULL").length
+          : combo.reviewCount ?? 0,
       }));
 
       setCombos(normalized);
@@ -104,7 +107,7 @@ export function ComboRental() {
     applyFilters();
   }, [combos, filters]);
 
-  const calculateHours = () => {
+  const calculateDays = () => {
     if (
       !filters.startDate ||
       !filters.startTime ||
@@ -117,9 +120,9 @@ export function ComboRental() {
     const start = new Date(`${filters.startDate}T${filters.startTime}`);
     const end = new Date(`${filters.endDate}T${filters.endTime}`);
     const diffMs = end.getTime() - start.getTime();
-    const hours = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60)));
+    const days = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
 
-    return hours;
+    return days;
   };
 
   const applyFilters = () => {
@@ -129,7 +132,7 @@ export function ComboRental() {
     if (filters.priceRange) {
       const [min, max] = filters.priceRange.split("-").map(Number);
       filtered = filtered.filter((combo) => {
-        const price = combo.pricePerHour;
+        const price = combo.pricePerDay;
         if (max) {
           return price >= min && price <= max;
         }
@@ -172,7 +175,7 @@ export function ComboRental() {
     currentPage * itemsPerPage
   );
 
-  const rentalHours = calculateHours();
+  const rentalDays = calculateDays();
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -189,77 +192,12 @@ export function ComboRental() {
       {/* Filter Section */}
       <div className="bg-white shadow-sm sticky top-16 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          {/* Time Filters */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-4">
-            <div>
-              <label className="block text-sm mb-1">Ngày bắt đầu</label>
-              <Input
-                type="date"
-                value={filters.startDate}
-                onChange={(e) =>
-                  handleFilterChange("startDate", e.target.value)
-                }
-                min={new Date().toISOString().split("T")[0]}
-              />
-            </div>
-            <div>
-              <label className="block text-sm mb-1">Giờ bắt đầu</label>
-              <Input
-                type="time"
-                value={filters.startTime}
-                onChange={(e) =>
-                  handleFilterChange("startTime", e.target.value)
-                }
-              />
-            </div>
-            <div>
-              <label className="block text-sm mb-1">Ngày kết thúc</label>
-              <Input
-                type="date"
-                value={filters.endDate}
-                onChange={(e) => handleFilterChange("endDate", e.target.value)}
-                min={
-                  filters.startDate || new Date().toISOString().split("T")[0]
-                }
-              />
-            </div>
-            <div>
-              <label className="block text-sm mb-1">Giờ kết thúc</label>
-              <Input
-                type="time"
-                value={filters.endTime}
-                onChange={(e) => handleFilterChange("endTime", e.target.value)}
-              />
-            </div>
-            <div className="flex items-end">
-              {rentalHours > 0 && (
-                <div className="bg-purple-50 border border-purple-200 rounded-lg px-4 py-2 w-full">
-                  <p className="text-sm text-purple-700">
-                    Thời gian thuê:{" "}
-                    <span className="font-semibold">{rentalHours} giờ</span>
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <Separator className="my-4" />
-
-          {/* Additional Filters Toggle */}
-          <div className="flex items-center justify-between">
-            <Button
-              variant="outline"
-              onClick={() => setShowFilters(!showFilters)}
-              className="flex items-center space-x-2"
-            >
+          {/* Filters header */}
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-2 text-gray-800 font-medium">
               <Filter className="h-4 w-4" />
-              <span>Bộ lọc nâng cao</span>
-              <ChevronDown
-                className={`h-4 w-4 transition-transform ${
-                  showFilters ? "rotate-180" : ""
-                }`}
-              />
-            </Button>
+              <span>Bộ lọc</span>
+            </div>
 
             <div className="text-sm text-gray-600">
               Tìm thấy{" "}
@@ -268,51 +206,49 @@ export function ComboRental() {
             </div>
           </div>
 
-          {/* Advanced Filters */}
-          {showFilters && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 pt-4 border-t">
-              <div>
-                <label className="block text-sm mb-1">Tìm kiếm</label>
-                <Input
-                  placeholder="Tên combo..."
-                  value={filters.search}
-                  onChange={(e) => handleFilterChange("search", e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="block text-sm mb-1">Giá thuê/giờ</label>
-                <Select
-                  value={filters.priceRange}
-                  onValueChange={(value: any) =>
-                    handleFilterChange("priceRange", value)
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Chọn mức giá" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="0-50000">Dưới 50.000đ</SelectItem>
-                    <SelectItem value="50000-80000">
-                      50.000đ - 80.000đ
-                    </SelectItem>
-                    <SelectItem value="80000-100000">
-                      80.000đ - 100.000đ
-                    </SelectItem>
-                    <SelectItem value="100000-999999">Trên 100.000đ</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex items-end">
-                <Button
-                  variant="outline"
-                  onClick={clearFilters}
-                  className="w-full"
-                >
-                  Xóa bộ lọc
-                </Button>
-              </div>
+          {/* Filters content always visible */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 pt-4 border-t">
+            <div>
+              <label className="block text-sm mb-1">Tìm kiếm</label>
+              <Input
+                placeholder="Tên combo..."
+                value={filters.search}
+                onChange={(e) => handleFilterChange("search", e.target.value)}
+              />
             </div>
-          )}
+            <div>
+              <label className="block text-sm mb-1">Giá thuê/ngày</label>
+              <Select
+                value={filters.priceRange}
+                onValueChange={(value: any) =>
+                  handleFilterChange("priceRange", value)
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Chọn mức giá" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0-50000">Dưới 50.000đ</SelectItem>
+                  <SelectItem value="50000-80000">
+                    50.000đ - 80.000đ
+                  </SelectItem>
+                  <SelectItem value="80000-100000">
+                    80.000đ - 100.000đ
+                  </SelectItem>
+                  <SelectItem value="100000-999999">Trên 100.000đ</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-end">
+              <Button
+                variant="outline"
+                onClick={clearFilters}
+                className="w-full"
+              >
+                Xóa bộ lọc
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -344,9 +280,9 @@ export function ComboRental() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {paginatedCombos.map((combo) => {
                 const totalPrice =
-                  rentalHours > 0
-                    ? combo.pricePerHour * rentalHours
-                    : combo.pricePerHour;
+                  rentalDays > 0
+                    ? combo.pricePerDay * rentalDays
+                    : combo.pricePerDay;
                 const queryParams = new URLSearchParams();
                 if (filters.startDate)
                   queryParams.append("startDate", filters.startDate);
@@ -370,8 +306,8 @@ export function ComboRental() {
                           alt={combo.name}
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         />
-                        <Badge className="absolute top-2 right-2 bg-white text-purple-700">
-                          {combo.deviceCount} thiết bị
+                        <Badge className="absolute top-2 left-2 bg-white text-emerald-700">
+                          Còn {combo.quantity} combo
                         </Badge>
                       </div>
                       <CardContent className="p-4">
@@ -426,17 +362,17 @@ export function ComboRental() {
                         <div className="space-y-1">
                           <div className="flex justify-between items-baseline">
                             <span className="text-sm text-gray-600">
-                              Giá thuê/giờ:
+                              Giá thuê/ngày:
                             </span>
                             <span className="font-semibold text-purple-600">
-                              {combo.pricePerHour.toLocaleString("vi-VN")}đ
+                              {combo.pricePerDay.toLocaleString("vi-VN")}đ
                             </span>
                           </div>
-                          {rentalHours > 0 && (
+                          {rentalDays > 0 && (
                             <>
                               <div className="flex justify-between items-baseline text-sm">
                                 <span className="text-gray-600">
-                                  × {rentalHours} giờ
+                                  × {rentalDays} ngày
                                 </span>
                                 <span className="text-gray-900"></span>
                               </div>

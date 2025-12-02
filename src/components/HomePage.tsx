@@ -75,7 +75,7 @@ export function HomePage() {
         image: device.images?.[0] ?? "https://images.unsplash.com/photo-1478131143081-80f7f84ca84d?w=800",
         pricePerDay: Number(device.price) || 0,
         pricePerHour: Math.round(Number(device.price) / 24) || 0,
-        rating: device.rating ?? 4.8,
+        rating: device.averageRating ?? device.rating ?? 0,
         available: device.status === "available",
         category: "sedan" as const,
         transmission: "auto" as const,

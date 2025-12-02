@@ -13,7 +13,7 @@ const supabase = createClient(
 );
 
 // Enable logger
-app.use('*', logger(console.log));
+app.use('*', logger((...args) => console.info(...args)));
 
 // Enable CORS for all routes and methods
 app.use(
@@ -46,7 +46,7 @@ app.post("/make-server-551107ff/auth/signup", async (c) => {
     });
 
     if (error) {
-      console.log(`Signup error: ${error.message}`);
+      console.error(`Signup error: ${error.message}`);
       return c.json({ error: error.message }, 400);
     }
 
@@ -65,7 +65,7 @@ app.post("/make-server-551107ff/auth/signup", async (c) => {
 
     return c.json({ user: data.user }, 201);
   } catch (error) {
-    console.log(`Signup processing error: ${error}`);
+    console.error(`Signup processing error: ${error}`);
     return c.json({ error: "Internal server error" }, 500);
   }
 });
@@ -83,7 +83,7 @@ app.get("/make-server-551107ff/auth/profile", async (c) => {
     const userProfile = await kv.get(`user:${user.id}`);
     return c.json({ user: userProfile || user });
   } catch (error) {
-    console.log(`Profile fetch error: ${error}`);
+    console.error(`Profile fetch error: ${error}`);
     return c.json({ error: "Internal server error" }, 500);
   }
 });
@@ -105,7 +105,7 @@ app.put("/make-server-551107ff/auth/profile", async (c) => {
     await kv.set(`user:${user.id}`, updatedProfile);
     return c.json({ user: updatedProfile });
   } catch (error) {
-    console.log(`Profile update error: ${error}`);
+    console.error(`Profile update error: ${error}`);
     return c.json({ error: "Internal server error" }, 500);
   }
 });
@@ -128,7 +128,7 @@ app.get("/make-server-551107ff/vehicles", async (c) => {
       totalPages: Math.ceil(vehicles.length / limit)
     });
   } catch (error) {
-    console.log(`Vehicle listing error: ${error}`);
+    console.error(`Vehicle listing error: ${error}`);
     return c.json({ error: "Internal server error" }, 500);
   }
 });
@@ -144,7 +144,7 @@ app.get("/make-server-551107ff/vehicles/:id", async (c) => {
 
     return c.json({ vehicle });
   } catch (error) {
-    console.log(`Vehicle detail error: ${error}`);
+    console.error(`Vehicle detail error: ${error}`);
     return c.json({ error: "Internal server error" }, 500);
   }
 });
@@ -180,7 +180,7 @@ app.post("/make-server-551107ff/bookings", async (c) => {
 
     return c.json({ booking }, 201);
   } catch (error) {
-    console.log(`Booking creation error: ${error}`);
+    console.error(`Booking creation error: ${error}`);
     return c.json({ error: "Internal server error" }, 500);
   }
 });
@@ -200,7 +200,7 @@ app.get("/make-server-551107ff/bookings/user", async (c) => {
 
     return c.json({ bookings: bookings.filter(Boolean) });
   } catch (error) {
-    console.log(`User bookings fetch error: ${error}`);
+    console.error(`User bookings fetch error: ${error}`);
     return c.json({ error: "Internal server error" }, 500);
   }
 });
@@ -1008,7 +1008,7 @@ app.post("/make-server-551107ff/init-data", async (c) => {
 
     return c.json({ message: "Sample data initialized successfully" });
   } catch (error) {
-    console.log(`Data initialization error: ${error}`);
+    console.error(`Data initialization error: ${error}`);
     return c.json({ error: "Internal server error" }, 500);
   }
 });

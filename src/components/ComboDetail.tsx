@@ -38,7 +38,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 interface Combo {
   id: string;
   name: string;
-  pricePerHour: number;
+  pricePerDay: number;
   description?: string;
   images?: string[];
   devices: Array<{ name: string; quantity: number; description?: string }>;
@@ -48,11 +48,30 @@ interface Combo {
 
 interface Review {
   id: string;
-  userName: string;
-  userAvatar: string;
+  bookingId?: string;
+  vehicleId?: string;
+  userId?: string;
   rating: number;
-  comment: string;
-  date: string;
+  title?: string;
+  type?: number;
+  content?: string;
+  images?: string[];
+  createdAt?: string;
+  updatedAt?: string;
+  userName?: string;
+  userAvatar?: string;
+}
+
+interface ReviewsResponse {
+  data: {
+    reviews: Review[];
+    page: number;
+    limit: number;
+    totalItems: number;
+    totalPages: number;
+  };
+  message: string;
+  statusCode: number;
 }
 
 interface User {
@@ -76,40 +95,22 @@ export function ComboDetail({ user }: ComboDetailProps) {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [showImageModal, setShowImageModal] = useState(false);
   const [isFavorite, setIsFavorite] = useState(false);
-  const [discountCode, setDiscountCode] = useState("");
-  const [appliedDiscount, setAppliedDiscount] = useState<any>(null);
   const [bookingLoading, setBookingLoading] = useState(false);
   const [rentalDuration, setRentalDuration] = useState<{
     startDate: string;
-    startTime: string;
     endDate: string;
-    endTime: string;
-    hours: number;
+    days: number;
   } | null>(null);
-
-  const reviews: Review[] = [
-    {
-      id: "1",
-      userName: "Phạm Minh D",
-      userAvatar:
-        "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=64&h=64&fit=crop&crop=face",
-      rating: 5,
-      comment: "Combo rất đầy đủ, tiết kiệm chi phí hơn thuê lẻ!",
-      date: "2024-01-20",
-    },
-    {
-      id: "2",
-      userName: "Lê Thị E",
-      userAvatar:
-        "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=64&h=64&fit=crop&crop=face",
-      rating: 5,
-      comment: "Chất lượng thiết bị tốt, đóng gói cẩn thận",
-      date: "2024-01-18",
-    },
-  ];
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState("description");
+  const [hasFetchedReviews, setHasFetchedReviews] = useState(false);
 
   useEffect(() => {
     fetchComboDetail();
+    setActiveTab("description");
+    setHasFetchedReviews(false);
+    setReviews([]);
 
     const startDate = searchParams.get("startDate");
     const startTime = searchParams.get("startTime");
@@ -120,14 +121,22 @@ export function ComboDetail({ user }: ComboDetailProps) {
       const start = new Date(`${startDate}T${startTime}`);
       const end = new Date(`${endDate}T${endTime}`);
       const diffMs = end.getTime() - start.getTime();
-      const hours = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60)));
+      const days = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
 
       setRentalDuration({
         startDate,
-        startTime,
         endDate,
-        endTime,
-        hours,
+        days,
+      });
+    } else {
+      // default prefill today -> tomorrow
+      const today = new Date();
+      const tomorrow = new Date();
+      tomorrow.setDate(today.getDate() + 1);
+      setRentalDuration({
+        startDate: today.toISOString().slice(0, 10),
+        endDate: tomorrow.toISOString().slice(0, 10),
+        days: 1,
       });
     }
   }, [id, searchParams]);
@@ -140,27 +149,23 @@ export function ComboDetail({ user }: ComboDetailProps) {
     setLoading(true);
     try {
       const url = `${apiBaseUrl}/combo/${id}`;
-      console.log('[ComboDetail] Fetching from:', url);
 
       const response = await fetch(url, {
         credentials: "include",
       });
-
-      console.log('[ComboDetail] Response status:', response.status);
 
       if (!response.ok) {
         throw new Error(`Failed to fetch combo (${response.status})`);
       }
 
       const payload = await response.json();
-      console.log('[ComboDetail] Payload:', payload);
       const comboData = payload?.data ?? payload;
 
       const normalized: Combo = {
         id: comboData.id,
         name: comboData.name,
         description: comboData.description,
-        pricePerHour: Number(comboData.price) || 0,
+        pricePerDay: Number(comboData.price) || 0,
         images: Array.isArray(comboData.images) ? comboData.images : [],
         devices: Array.isArray(comboData.devices)
           ? comboData.devices.map((device: any) => ({
@@ -169,8 +174,10 @@ export function ComboDetail({ user }: ComboDetailProps) {
               description: device.description,
             }))
           : [],
-        rating: comboData.rating ?? 4.8,
-        reviewCount: comboData.reviewCount ?? 0,
+        rating: Number(comboData.averageRating ?? comboData.rating ?? 0) || 0,
+        reviewCount: Array.isArray(comboData.reviewIds)
+          ? comboData.reviewIds.filter((rid: string) => rid && rid !== "NULL").length
+          : comboData.reviewCount ?? 0,
       };
 
       setCombo(normalized);
@@ -183,24 +190,45 @@ export function ComboDetail({ user }: ComboDetailProps) {
     }
   };
 
-  const handleApplyDiscount = () => {
-    if (discountCode === "COMBO20") {
-      setAppliedDiscount({
-        code: discountCode,
-        percentage: 20,
-        description: "Giảm 20% cho combo",
+  const fetchReviews = async () => {
+    if (!id) {
+      return;
+    }
+
+    setReviewsLoading(true);
+    try {
+      const url = `${apiBaseUrl}/review/combo/${id}`;
+
+      const response = await fetch(url, {
+        credentials: "include",
       });
-      toast.success("Áp dụng mã giảm giá thành công!");
-    } else {
-      toast.error("Mã giảm giá không hợp lệ");
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch reviews (${response.status})`);
+      }
+
+      const payload: ReviewsResponse = await response.json();
+
+      if (payload.data && Array.isArray(payload.data.reviews)) {
+        setReviews(payload.data.reviews);
+      }
+    } catch (error) {
+      console.error("Error fetching combo reviews:", error);
+      setReviews([]);
+    } finally {
+      setReviewsLoading(false);
     }
   };
 
-  const handleBooking = async () => {
-    if (!rentalDuration) {
-      toast.error("Vui lòng chọn thời gian thuê");
-      return;
+  useEffect(() => {
+    if (activeTab === "reviews" && !hasFetchedReviews) {
+      fetchReviews();
+      setHasFetchedReviews(true);
     }
+  }, [activeTab, hasFetchedReviews, id]);
+
+  const handleBooking = async () => {
+    if (!rentalDuration) return;
 
     if (!combo?.id) {
       toast.error("Không tìm thấy thông tin combo");
@@ -300,17 +328,20 @@ export function ComboDetail({ user }: ComboDetailProps) {
   }
 
   const rentalPrice = rentalDuration
-    ? combo.pricePerHour * rentalDuration.hours
-    : combo.pricePerHour;
-
-  const discountAmount = appliedDiscount
-    ? (rentalPrice * appliedDiscount.percentage) / 100
-    : 0;
-
-  const depositAmount = 2000000; // 2 triệu VNĐ tiền thế chấp cho combo
-  const advancePayment = 3000000; // 3 triệu VNĐ tiền cọc
-  const totalAmount =
-    rentalPrice - discountAmount + depositAmount + advancePayment;
+    ? combo.pricePerDay * rentalDuration.days
+    : combo.pricePerDay;
+  const totalAmount = rentalPrice;
+  const displayRating =
+    reviews.length > 0
+      ? Number(
+          (
+            reviews.reduce((sum, review) => sum + (review.rating || 0), 0) /
+            reviews.length
+          ).toFixed(1)
+        )
+      : combo.rating;
+  const displayReviewCount =
+    reviews.length > 0 ? reviews.length : combo.reviewCount;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -412,7 +443,7 @@ export function ComboDetail({ user }: ComboDetailProps) {
             {/* Tabs */}
             <Card>
               <CardContent className="p-6">
-                <Tabs defaultValue="description">
+                <Tabs value={activeTab} onValueChange={setActiveTab}>
                   <TabsList className="w-full">
                     <TabsTrigger value="description" className="flex-1">
                       Mô tả
@@ -421,7 +452,7 @@ export function ComboDetail({ user }: ComboDetailProps) {
                       Thiết bị ({combo.devices.length})
                     </TabsTrigger>
                     <TabsTrigger value="reviews" className="flex-1">
-                      Đánh giá ({reviews.length})
+                      Đánh giá ({reviewsLoading ? "..." : displayReviewCount})
                     </TabsTrigger>
                   </TabsList>
 
@@ -483,43 +514,71 @@ export function ComboDetail({ user }: ComboDetailProps) {
 
                   <TabsContent value="reviews" className="mt-4">
                     <div className="space-y-4">
-                      {reviews.map((review) => (
-                        <div
-                          key={review.id}
-                          className="border-b pb-4 last:border-0"
-                        >
-                          <div className="flex items-center space-x-3 mb-2">
-                            <img
-                              src={review.userAvatar}
-                              alt={review.userName}
-                              className="w-10 h-10 rounded-full"
-                            />
-                            <div>
-                              <p className="font-semibold">{review.userName}</p>
-                              <div className="flex items-center space-x-2">
-                                <div className="flex">
-                                  {[...Array(5)].map((_, i) => (
-                                    <Star
-                                      key={i}
-                                      className={`h-4 w-4 ${
-                                        i < review.rating
-                                          ? "fill-yellow-400 text-yellow-400"
-                                          : "text-gray-300"
-                                      }`}
-                                    />
-                                  ))}
+                      {reviewsLoading ? (
+                        <p className="text-sm text-gray-500">Đang tải đánh giá...</p>
+                      ) : reviews.length === 0 ? (
+                        <div className="text-center text-gray-500 py-6">
+                          <Star className="h-6 w-6 mx-auto mb-2 text-gray-400" />
+                          <p>Chưa có đánh giá nào</p>
+                        </div>
+                      ) : (
+                        reviews.map((review) => (
+                          <div
+                            key={review.id}
+                            className="border-b pb-4 last:border-0"
+                          >
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center space-x-3">
+                                <img
+                                  src={
+                                    review.userAvatar ||
+                                    "https://ui-avatars.com/api/?name=User"
+                                  }
+                                  alt={review.userName || "Người dùng"}
+                                  className="w-10 h-10 rounded-full"
+                                />
+                                <div>
+                                  <p className="font-semibold">
+                                    {review.userName || "Người dùng"}
+                                  </p>
+                                  <div className="flex items-center space-x-2 text-sm text-gray-500">
+                                    <div className="flex">
+                                      {[...Array(5)].map((_, i) => (
+                                        <Star
+                                          key={i}
+                                          className={`h-4 w-4 ${
+                                            i < review.rating
+                                              ? "fill-yellow-400 text-yellow-400"
+                                              : "text-gray-300"
+                                          }`}
+                                        />
+                                      ))}
+                                    </div>
+                                    {review.createdAt && (
+                                      <span>{formatVNDate(review.createdAt)}</span>
+                                    )}
+                                  </div>
                                 </div>
-                                <span className="text-sm text-gray-500">
-                                  {review.date}
-                                </span>
                               </div>
                             </div>
+                            <p className="text-gray-700 mb-3">
+                              {review.content || review.title || "Không có nội dung"}
+                            </p>
+                            {review.images && review.images.length > 0 && (
+                              <div className="grid grid-cols-3 gap-2 mt-3">
+                                {review.images.map((image, idx) => (
+                                  <ImageWithFallback
+                                    key={idx}
+                                    src={image}
+                                    alt={`Review image ${idx + 1}`}
+                                    className="w-full h-24 object-cover rounded-lg"
+                                  />
+                                ))}
+                              </div>
+                            )}
                           </div>
-                          <p className="text-gray-700 ml-13">
-                            {review.comment}
-                          </p>
-                        </div>
-                      ))}
+                        ))
+                      )}
                     </div>
                   </TabsContent>
                 </Tabs>
@@ -551,9 +610,9 @@ export function ComboDetail({ user }: ComboDetailProps) {
                 <div className="flex items-center mt-2">
                   <div className="flex items-center">
                     <Star className="h-5 w-5 fill-yellow-400 text-yellow-400" />
-                    <span className="ml-1 font-semibold">{combo.rating}</span>
+                    <span className="ml-1 font-semibold">{displayRating}</span>
                     <span className="ml-1 text-sm text-gray-500">
-                      ({combo.reviewCount} đánh giá)
+                      ({displayReviewCount} đánh giá)
                     </span>
                   </div>
                 </div>
@@ -564,79 +623,83 @@ export function ComboDetail({ user }: ComboDetailProps) {
               </CardHeader>
 
               <CardContent className="space-y-4">
-                {rentalDuration && (
-                  <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
-                    <div className="flex items-center space-x-2 mb-2">
-                      <Calendar className="h-4 w-4 text-purple-700" />
-                      <span className="text-sm font-semibold text-purple-900">
-                        Thời gian thuê
-                      </span>
+                <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 space-y-3">
+                  <div className="flex items-center space-x-2">
+                    <Calendar className="h-4 w-4 text-purple-700" />
+                    <span className="text-sm font-semibold text-purple-900">Chọn ngày thuê</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-xs text-gray-600">Ngày bắt đầu</label>
+                      <Input
+                        type="date"
+                        value={rentalDuration?.startDate || ''}
+                        min={new Date().toISOString().slice(0, 10)}
+                        onChange={(e) => {
+                          const startDate = e.target.value;
+                          setRentalDuration((prev) => {
+                            if (!prev) return null;
+                            const endDate = prev.endDate && prev.endDate < startDate ? startDate : prev.endDate;
+                            const days = Math.max(
+                              1,
+                              Math.ceil(
+                                (new Date(endDate || startDate).getTime() - new Date(startDate).getTime()) /
+                                  (1000 * 60 * 60 * 24)
+                              )
+                            );
+                            return { ...prev, startDate, endDate: endDate || startDate, days };
+                          });
+                        }}
+                      />
                     </div>
-                    <div className="text-sm text-purple-700 space-y-1">
-                      <p>
-                        Từ:{" "}
-                        {new Date(
-                          `${rentalDuration.startDate}T${rentalDuration.startTime}`
-                        ).toLocaleString("vi-VN")}
-                      </p>
-                      <p>
-                        Đến:{" "}
-                        {new Date(
-                          `${rentalDuration.endDate}T${rentalDuration.endTime}`
-                        ).toLocaleString("vi-VN")}
-                      </p>
-                      <p className="font-semibold pt-2 border-t border-purple-200">
-                        Tổng thời gian: {rentalDuration.hours} giờ
-                      </p>
+                    <div className="space-y-1">
+                      <label className="text-xs text-gray-600">Ngày kết thúc</label>
+                      <Input
+                        type="date"
+                        value={rentalDuration?.endDate || ''}
+                        min={rentalDuration?.startDate || new Date().toISOString().slice(0, 10)}
+                        onChange={(e) => {
+                          const endDate = e.target.value;
+                          setRentalDuration((prev) => {
+                            if (!prev) return null;
+                            const days = Math.max(
+                              1,
+                              Math.ceil(
+                                (new Date(endDate).getTime() - new Date(prev.startDate).getTime()) /
+                                  (1000 * 60 * 60 * 24)
+                              )
+                            );
+                            return { ...prev, endDate, days };
+                          });
+                        }}
+                      />
                     </div>
                   </div>
-                )}
+                  {rentalDuration && (
+                    <p className="text-sm text-purple-800">
+                      Tổng thời gian: <span className="font-semibold">{rentalDuration.days} ngày</span>
+                    </p>
+                  )}
+                </div>
 
                 <Separator />
 
                 <div className="space-y-3">
                   <div className="flex justify-between text-sm">
-                    <span className="text-gray-600">Giá thuê/giờ:</span>
+                    <span className="text-gray-600">Giá thuê/ngày:</span>
                     <span className="font-semibold">
-                      {combo.pricePerHour.toLocaleString("vi-VN")}đ
+                      {combo.pricePerDay.toLocaleString("vi-VN")}đ
                     </span>
                   </div>
 
                   {rentalDuration && (
                     <>
                       <div className="flex justify-between text-sm">
-                        <span className="text-gray-600">
-                          × {rentalDuration.hours} giờ:
-                        </span>
+                        <span className="text-gray-600">× {rentalDuration.days} ngày:</span>
                         <span className="font-semibold">
                           {rentalPrice.toLocaleString("vi-VN")}đ
                         </span>
                       </div>
-
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-600">Tiền cọc (riêng):</span>
-                        <span className="font-semibold text-orange-600">
-                          {advancePayment.toLocaleString("vi-VN")}đ
-                        </span>
-                      </div>
-
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-600">
-                          Tiền thế chấp (hoàn trả):
-                        </span>
-                        <span className="font-semibold text-blue-600">
-                          {depositAmount.toLocaleString("vi-VN")}đ
-                        </span>
-                      </div>
-
-                      {appliedDiscount && (
-                        <div className="flex justify-between text-sm text-green-600">
-                          <span>Giảm giá ({appliedDiscount.percentage}%):</span>
-                          <span>
-                            -{discountAmount.toLocaleString("vi-VN")}đ
-                          </span>
-                        </div>
-                      )}
 
                       <Separator />
 
@@ -648,33 +711,9 @@ export function ComboDetail({ user }: ComboDetailProps) {
                       </div>
 
                       <p className="text-xs text-gray-500">
-                        * Tiền thế chấp sẽ được hoàn trả sau khi trả thiết bị
+                        Tổng thanh toán được tính theo giá thuê/ngày.
                       </p>
                     </>
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Mã giảm giá</label>
-                  <div className="flex space-x-2">
-                    <Input
-                      placeholder="Nhập mã giảm giá"
-                      value={discountCode}
-                      onChange={(e) => setDiscountCode(e.target.value)}
-                      disabled={!!appliedDiscount}
-                    />
-                    <Button
-                      onClick={handleApplyDiscount}
-                      disabled={!discountCode || !!appliedDiscount}
-                      variant="outline"
-                    >
-                      Áp dụng
-                    </Button>
-                  </div>
-                  {appliedDiscount && (
-                    <p className="text-sm text-green-600">
-                      ✓ {appliedDiscount.description}
-                    </p>
                   )}
                 </div>
 
@@ -686,12 +725,6 @@ export function ComboDetail({ user }: ComboDetailProps) {
                 >
                   {bookingLoading ? 'Đang xử lý...' : 'Đặt thuê ngay'}
                 </Button>
-
-                {!rentalDuration && (
-                  <p className="text-sm text-center text-amber-600">
-                    Vui lòng chọn thời gian thuê từ trang danh sách
-                  </p>
-                )}
 
                 <div className="flex space-x-2">
                   <Button variant="outline" className="flex-1">

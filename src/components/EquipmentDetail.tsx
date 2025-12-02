@@ -40,7 +40,7 @@ interface Equipment {
   name: string;
   brand?: string;
   description?: string;
-  pricePerHour: number;
+  pricePerDay: number;
   information?: string[];
   quantity?: number;
   status?: string;
@@ -104,15 +104,19 @@ export function EquipmentDetail({ user }: EquipmentDetailProps) {
     startTime: string;
     endDate: string;
     endTime: string;
-    hours: number;
+    days: number;
   } | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [reviewsLoading, setReviewsLoading] = useState(false);
   const [bookingLoading, setBookingLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState("description");
+  const [hasFetchedReviews, setHasFetchedReviews] = useState(false);
 
   useEffect(() => {
     fetchEquipmentDetail();
-    fetchReviews();
+    setActiveTab("description");
+    setHasFetchedReviews(false);
+    setReviews([]);
 
     // Get rental duration from URL params
     const startDate = searchParams.get("startDate");
@@ -124,14 +128,14 @@ export function EquipmentDetail({ user }: EquipmentDetailProps) {
       const start = new Date(`${startDate}T${startTime}`);
       const end = new Date(`${endDate}T${endTime}`);
       const diffMs = end.getTime() - start.getTime();
-      const hours = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60)));
+      const days = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
 
       setRentalDuration({
         startDate,
         startTime,
         endDate,
         endTime,
-        hours,
+        days,
       });
     }
   }, [id, searchParams, apiBaseUrl]);
@@ -144,20 +148,16 @@ export function EquipmentDetail({ user }: EquipmentDetailProps) {
     setLoading(true);
     try {
       const url = `${apiBaseUrl}/device/${id}`;
-      console.log('[EquipmentDetail] Fetching from:', url);
 
       const response = await fetch(url, {
         credentials: "include",
       });
-
-      console.log('[EquipmentDetail] Response status:', response.status);
 
       if (!response.ok) {
         throw new Error(`Failed to fetch device (${response.status})`);
       }
 
       const payload = await response.json();
-      console.log('[EquipmentDetail] Payload:', payload);
       const device = payload?.data ?? payload;
 
       const normalized: Equipment = {
@@ -166,13 +166,15 @@ export function EquipmentDetail({ user }: EquipmentDetailProps) {
         brand: device.categoryName ?? device.brand,
         categoryName: device.categoryName,
         description: device.description,
-        pricePerHour: Number(device.price) || 0,
+        pricePerDay: Number(device.price) || 0,
         information: Array.isArray(device.information) ? device.information : [],
         quantity: device.quantity ?? 1,
         status: device.status,
         images: Array.isArray(device.images) ? device.images : [],
-        rating: device.rating ?? 4.8,
-        reviewCount: device.reviewCount ?? 0,
+        rating: Number(device.averageRating ?? device.rating ?? 0) || 0,
+        reviewCount: Array.isArray(device.reviewIds)
+          ? device.reviewIds.filter((id: string) => id && id !== "NULL").length
+          : device.reviewCount ?? 0,
       };
 
       setEquipment(normalized);
@@ -192,21 +194,17 @@ export function EquipmentDetail({ user }: EquipmentDetailProps) {
 
     setReviewsLoading(true);
     try {
-      const url = `${apiBaseUrl}/review/vehicle/${id}`;
-      console.log('[EquipmentDetail] Fetching reviews from:', url);
+      const url = `${apiBaseUrl}/review/device/${id}`;
 
       const response = await fetch(url, {
         credentials: "include",
       });
-
-      console.log('[EquipmentDetail] Reviews response status:', response.status);
 
       if (!response.ok) {
         throw new Error(`Failed to fetch reviews (${response.status})`);
       }
 
       const payload: ReviewsResponse = await response.json();
-      console.log('[EquipmentDetail] Reviews payload:', payload);
 
       if (payload.data && Array.isArray(payload.data.reviews)) {
         setReviews(payload.data.reviews);
@@ -219,6 +217,13 @@ export function EquipmentDetail({ user }: EquipmentDetailProps) {
       setReviewsLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (activeTab === "reviews" && !hasFetchedReviews) {
+      fetchReviews();
+      setHasFetchedReviews(true);
+    }
+  }, [activeTab, hasFetchedReviews, id]);
 
   const handleApplyDiscount = () => {
     // Mock discount validation
@@ -341,17 +346,27 @@ export function EquipmentDetail({ user }: EquipmentDetailProps) {
   }
 
   const rentalPrice = rentalDuration
-    ? equipment.pricePerHour * rentalDuration.hours
-    : equipment.pricePerHour;
+    ? equipment.pricePerDay * rentalDuration.days
+    : equipment.pricePerDay;
 
   const discountAmount = appliedDiscount
     ? (rentalPrice * appliedDiscount.percentage) / 100
     : 0;
 
-  const depositAmount = 1000000; // 1 triệu VNĐ tiền thế chấp
-  const advancePayment = 3000000; // 3 triệu VNĐ tiền cọc
-  const totalAmount =
-    rentalPrice - discountAmount + depositAmount + advancePayment;
+  const totalAmount = Math.max(0, rentalPrice - discountAmount);
+
+  const displayRating =
+    reviews.length > 0
+      ? Number(
+          (
+            reviews.reduce((sum, review) => sum + (review.rating || 0), 0) /
+            reviews.length
+          ).toFixed(1)
+        )
+      : equipment.rating;
+
+  const displayReviewCount =
+    reviews.length > 0 ? reviews.length : equipment.reviewCount;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -454,7 +469,7 @@ export function EquipmentDetail({ user }: EquipmentDetailProps) {
             {/* Tabs */}
             <Card>
               <CardContent className="p-6">
-                <Tabs defaultValue="description">
+                <Tabs value={activeTab} onValueChange={setActiveTab}>
                   <TabsList className="w-full">
                     <TabsTrigger value="description" className="flex-1">
                       Mô tả
@@ -463,7 +478,7 @@ export function EquipmentDetail({ user }: EquipmentDetailProps) {
                       Thông số
                     </TabsTrigger>
                     <TabsTrigger value="reviews" className="flex-1">
-                      Đánh giá ({reviewsLoading ? '...' : reviews.length})
+                      Đánh giá ({reviewsLoading ? "..." : displayReviewCount})
                     </TabsTrigger>
                   </TabsList>
 
@@ -579,15 +594,15 @@ export function EquipmentDetail({ user }: EquipmentDetailProps) {
                 </div>
 
                 <div className="flex items-center mt-2">
-                  <div className="flex items-center">
-                    <Star className="h-5 w-5 fill-yellow-400 text-yellow-400" />
-                    <span className="ml-1 font-semibold">
-                      {equipment.rating}
-                    </span>
-                    <span className="ml-1 text-sm text-gray-500">
-                      ({equipment.reviewCount} đánh giá)
-                    </span>
-                  </div>
+                        <div className="flex items-center">
+                          <Star className="h-5 w-5 fill-yellow-400 text-yellow-400" />
+                          <span className="ml-1 font-semibold">
+                            {displayRating}
+                          </span>
+                          <span className="ml-1 text-sm text-gray-500">
+                            ({displayReviewCount} đánh giá)
+                          </span>
+                        </div>
                 </div>
 
                 {equipment.quantity && (
@@ -632,7 +647,7 @@ export function EquipmentDetail({ user }: EquipmentDetailProps) {
                             startTime: "08:00",
                             endDate: newEndDate,
                             endTime: "18:00",
-                            hours: Math.max(1, days * 24),
+                            days: Math.max(1, days),
                           });
                         }}
                         min={new Date().toISOString().split("T")[0]}
@@ -652,7 +667,7 @@ export function EquipmentDetail({ user }: EquipmentDetailProps) {
                             startTime: "08:00",
                             endDate: e.target.value,
                             endTime: "18:00",
-                            hours: Math.max(1, days * 24),
+                            days: Math.max(1, days),
                           });
                         }}
                         min={rentalDuration?.startDate || new Date().toISOString().split("T")[0]}
@@ -681,7 +696,7 @@ export function EquipmentDetail({ user }: EquipmentDetailProps) {
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-600">Giá thuê/ngày:</span>
                     <span className="font-semibold">
-                      {equipment.pricePerHour.toLocaleString("vi-VN")}đ
+                      {equipment.pricePerDay.toLocaleString("vi-VN")}đ
                     </span>
                   </div>
 
@@ -689,26 +704,10 @@ export function EquipmentDetail({ user }: EquipmentDetailProps) {
                     <>
                       <div className="flex justify-between text-sm">
                         <span className="text-gray-600">
-                          × {rentalDuration.hours} giờ:
+                          × {rentalDuration.days} ngày:
                         </span>
                         <span className="font-semibold">
                           {rentalPrice.toLocaleString("vi-VN")}đ
-                        </span>
-                      </div>
-
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-600">Tiền cọc (riêng):</span>
-                        <span className="font-semibold text-orange-600">
-                          {advancePayment.toLocaleString("vi-VN")}đ
-                        </span>
-                      </div>
-
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-600">
-                          Tiền thế chấp (hoàn trả):
-                        </span>
-                        <span className="font-semibold text-blue-600">
-                          {depositAmount.toLocaleString("vi-VN")}đ
                         </span>
                       </div>
 
@@ -729,10 +728,6 @@ export function EquipmentDetail({ user }: EquipmentDetailProps) {
                           {totalAmount.toLocaleString("vi-VN")}đ
                         </span>
                       </div>
-
-                      <p className="text-xs text-gray-500">
-                        * Tiền thế chấp sẽ được hoàn trả sau khi trả thiết bị
-                      </p>
                     </>
                   )}
                 </div>

@@ -108,7 +108,7 @@ export function createWebSocket(path: string, opts?: { reconnect?: boolean; debu
   let backoff = 1000; // start with 1s
   const handlers = new Map<string, Set<EventHandler>>();
 
-  const log = (...args: any[]) => debug && console.log('[WS]', ...args);
+  const log = (...args: any[]) => debug && console.debug('[WS]', ...args);
 
   const dispatch = (event: string, data: any) => {
     const set = handlers.get(event);
@@ -227,7 +227,7 @@ function createSocketIoClient(
   });
 
   if (options?.debug) {
-    socket.onAny((event, ...args) => console.log('[WS]', path, event, ...args));
+    socket.onAny((event, ...args) => console.debug('[WS]', path, event, ...args));
   }
 
   return {

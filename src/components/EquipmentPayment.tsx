@@ -53,6 +53,17 @@ const sanitizeDescription = (text: string) => {
     .slice(0, 20);
 };
 
+const formatDateOnly = (date?: string) => {
+  if (!date) return '';
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return date;
+  return d.toLocaleDateString('vi-VN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+};
+
 interface User {
   id: string;
   email: string;
@@ -565,12 +576,12 @@ export function EquipmentPayment({ user }: EquipmentPaymentProps) {
                   <div>
                     <p className="text-sm text-gray-600">Thời gian thuê</p>
                     <p className="font-semibold">
-                      {rentalDuration?.startDate} đến {rentalDuration?.endDate}
+                      {formatDateOnly(rentalDuration?.startDate)} đến {formatDateOnly(rentalDuration?.endDate)}
                     </p>
                   </div>
                   <Separator />
                   <div>
-                    <p className="text-sm text-gray-600">Phí thuê</p>
+                    <p className="text-sm text-gray-600">Phí thuê / ngày</p>
                     <p className="font-semibold">{formatCurrency(rental.rentalFee || 0)}</p>
                   </div>
                   <div>

@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Routes, Route, Link, useLocation } from 'react-router-dom';
 import { 
   User, History, MapPin, CreditCard, MessageSquare, 
   Lock, LogOut, Camera, Star, Eye, Upload, Plus,
   Check, MessageCircle, Activity, Wifi, Copy, QrCode,
-  Loader2, AlertCircle
+  Loader2, AlertCircle, RotateCcw
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
@@ -55,7 +55,6 @@ export function UserProfile({ user }: UserProfileProps) {
       
       if (!response.ok) {
         if (response.status === 404) {
-          console.log('Driver license not found');
           setDriverLicense(null);
           return;
         }
@@ -81,6 +80,8 @@ export function UserProfile({ user }: UserProfileProps) {
     { id: 'account', label: 'Tài khoản của tôi', icon: User, path: '/profile/account' },
     { id: 'history', label: 'Lịch sử thuê xe', icon: History, path: '/profile/history' },
     { id: 'equipment-history', label: 'Lịch sử thuê thiết bị', icon: History, path: '/profile/equipment-history' },
+    { id: 'refunds', label: 'Hoàn tiền', icon: RotateCcw, path: '/profile/refunds' },
+    { id: 'reviews', label: 'Đánh giá', icon: Star, path: '/profile/reviews' },
     { id: 'payment', label: 'Ví', icon: CreditCard, path: '/profile/payment' },
     { id: 'complaints', label: 'Lịch sử khiếu nại', icon: MessageSquare, path: '/profile/complaints' },
     { id: 'password', label: 'Đổi mật khẩu', icon: Lock, path: '/profile/password' },
@@ -130,13 +131,15 @@ export function UserProfile({ user }: UserProfileProps) {
         {/* Main Content */}
         <div className="lg:col-span-3">
           <Routes>
-            <Route path="/account" element={<AccountTab user={currentUser} driver={driverLicense} />} />
-            <Route path="/history" element={<HistoryTab />} />
-            <Route path="/equipment-history" element={<EquipmentHistoryTab />} />
-            <Route path="/payment" element={<PaymentTab />} />
-            <Route path="/complaints" element={<ComplaintsTab />} />
-            <Route path="/password" element={<PasswordTab />} />
-            <Route path="/" element={<AccountTab user={currentUser} driver={driverLicense} />} />
+            <Route path="account" element={<AccountTab user={currentUser} driver={driverLicense} />} />
+            <Route path="history" element={<HistoryTab />} />
+            <Route path="refunds" element={<RefundTab />} />
+            <Route path="reviews" element={<ReviewTab />} />
+            <Route path="equipment-history" element={<EquipmentHistoryTab />} />
+            <Route path="payment" element={<PaymentTab />} />
+            <Route path="complaints" element={<ComplaintsTab />} />
+            <Route path="password" element={<PasswordTab />} />
+            <Route index element={<AccountTab user={currentUser} driver={driverLicense} />} />
           </Routes>
         </div>
       </div>
@@ -235,7 +238,6 @@ function AccountTab({ user, driver }: { user: User; driver?: Driver | null }) {
         toast.success('Cập nhật ảnh đại diện thành công! (Debug mode - không reload)');
         // Trigger parent component refresh
         // window.location.reload(); // Commented out for debugging
-        console.log('✅ Avatar upload completed successfully. Image URL:', imageUrl);
       } else {
         const errorData = await response.json();
         throw new Error(errorData.message || 'Lưu URL ảnh vào database thất bại');
@@ -320,8 +322,6 @@ function AccountTab({ user, driver }: { user: User; driver?: Driver | null }) {
         backImageUrl: urlMapping.back,
         selfieImageUrl: urlMapping.selfie
       };
-
-      console.log('Sending license payload:', payload);
       
       // Submit license data to backend
       const method = isUpdate ? 'PUT' : 'POST';
@@ -336,11 +336,8 @@ function AccountTab({ user, driver }: { user: User; driver?: Driver | null }) {
         body: JSON.stringify(payload)
       });
 
-      console.log('Response status:', response.status);
-
       if (response.ok) {
         const result = await response.json();
-        console.log('Success response:', result);
         const successMessage = isUpdate 
           ? 'Đã cập nhật GPLX thành công!' 
           : 'Đã gửi yêu cầu xác thực GPLX thành công!';
@@ -399,7 +396,6 @@ function AccountTab({ user, driver }: { user: User; driver?: Driver | null }) {
 
       if (response.ok) {
         const result = await response.json();
-        console.log('Profile updated:', result);
         toast.success('Thông tin đã được cập nhật thành công!');
         
         // Cập nhật lại state từ response
@@ -811,9 +807,18 @@ const toDateISOString = (value: unknown): string => {
   return Number.isNaN(date.getTime()) ? '' : date.toISOString();
 };
 
+const toDateInputValue = (value?: string): string => {
+  if (!value) return '';
+  const asDate = new Date(value);
+  if (!Number.isNaN(asDate.getTime())) {
+    return asDate.toISOString().slice(0, 10);
+  }
+  return value.slice(0, 10);
+};
 
 
-type TabKey = 'info' | 'history' | 'check' | 'extension';
+
+type TabKey = 'info' | 'history' | 'check' | 'extension' | 'review';
 
 interface BookingSummary {
   id: string;
@@ -860,6 +865,7 @@ interface BookingDetailData extends BookingSummary {
   rentalFee?: number;
   insuranceFee?: number;
   deposit?: number;
+  reviewId?: string | null;
   notes?: string;
   dropoffAddress?: string;
   pickupLat?: number;
@@ -913,13 +919,37 @@ interface ExtensionRecord {
   approvedBy?: string;
 }
 
+interface EquipmentExtension {
+  id: string;
+  status?: string;
+  oldEndDate?: string;
+  newEndDate?: string;
+  additionalFee?: number;
+  reason?: string;
+  createdAt?: string;
+  paymentId?: string;
+}
+
+interface ReviewData {
+  id: string;
+  bookingId?: string;
+  vehicleId?: string;
+  userId?: string;
+  rating?: number;
+  title?: string;
+  type?: number | string;
+  content?: string;
+  images?: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 const BOOKING_STATUS_FILTERS = [
   { label: 'Tất cả', value: 'ALL' },
-  { label: 'Chờ xử lý', value: 'PENDING_PROCESS' },
+  { label: 'Chờ xử lý', value: 'PENDING' },
   { label: 'Đang thuê', value: 'ONGOING' },
   { label: 'Hoàn tất', value: 'COMPLETED' },
-  { label: 'Đã hủy', value: 'CANCELLED_GROUP' },
-  { label: 'Hoàn tiền', value: 'REFUNDED' }
+  { label: 'Đã hủy', value: 'CANCELLED' }
 ] as const;
 
 const BOOKING_STATUS_STYLES: Record<string, { label: string; className: string }> = {
@@ -1006,15 +1036,23 @@ function HistoryTab() {
   const [page, setPage] = useState(1);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<(typeof BOOKING_STATUS_FILTERS)[number]['value']>('ALL');
-  const { bookings, loading, error, totalPages, refetch } = useBookingList(page, BOOKING_LIST_LIMIT);
-  const { refunds, loading: refundsLoading, error: refundsError, totalPages: refundsTotalPages, refetch: refetchRefunds } = useRefundList(page, BOOKING_LIST_LIMIT);
-  const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
-  const isDesktop = useMediaQuery('(min-width: 1024px)');
-
-  // Khi statusFilter thay đổi sang/khỏi REFUNDED, reset page về 1
-  useEffect(() => {
-    setPage(1);
+  const apiStatus = useMemo(() => {
+    switch (statusFilter) {
+      case 'PENDING':
+        return ['PENDING'];
+      case 'ONGOING':
+        return ['ONGOING'];
+      case 'COMPLETED':
+        return ['COMPLETED'];
+      case 'CANCELLED':
+        return ['CANCELLED'];
+      default:
+        return undefined;
+    }
   }, [statusFilter]);
+
+  const { bookings, loading, error, totalPages, refetch } = useBookingList(page, BOOKING_LIST_LIMIT, apiStatus);
+  const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
 
   const filteredBookings = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
@@ -1030,41 +1068,27 @@ function HistoryTab() {
         return matchesKeyword;
       }
 
-      // Tab 2: Chờ xử lý - chỉ PENDING (chờ thanh toán khi ấn booking)
-      if (statusFilter === 'PENDING_PROCESS') {
-        const isPendingProcess = normalizedStatus === 'PENDING';
-        return matchesKeyword && isPendingProcess;
+      // Tab 2: Chờ xử lý - chỉ PENDING
+      if (statusFilter === 'PENDING') {
+        return matchesKeyword && normalizedStatus === 'PENDING';
       }
 
-      // Tab 3: Đang thuê - ONGOING hoặc PENDING_REFUND
-      // Hiển thị booking đang thuê (ONGOING) hoặc đã checkout nhưng chờ admin duyệt (PENDING_REFUND)
+      // Tab 3: Đang thuê - chỉ ONGOING
       if (statusFilter === 'ONGOING') {
-        const isOngoing = normalizedStatus === 'ONGOING';
-        const isPendingRefund = normalizedStatus === 'PENDING_REFUND';
-
-        // Hiển thị nếu status là ONGOING hoặc PENDING_REFUND
-        return matchesKeyword && (isOngoing || isPendingRefund);
+        return (
+          matchesKeyword &&
+          (normalizedStatus === 'ONGOING' || normalizedStatus === 'RECEIVED')
+        );
       }
 
       // Tab 4: Hoàn tất - COMPLETED
-      // Chỉ hiển thị khi backend trả về status COMPLETED (admin đã duyệt xong)
       if (statusFilter === 'COMPLETED') {
-        const isCompleted = normalizedStatus === 'COMPLETED';
-
-        // Chỉ hiển thị khi status là COMPLETED
-        return matchesKeyword && isCompleted;
+        return matchesKeyword && normalizedStatus === 'COMPLETED';
       }
 
-      // Tab 5: Đã hủy - CANCELLED, EXPIRED, OVERDUE
-      if (statusFilter === 'CANCELLED_GROUP') {
-        const isCancelled = ['CANCELLED', 'EXPIRED', 'OVERDUE'].includes(normalizedStatus);
-        return matchesKeyword && isCancelled;
-      }
-
-      // Tab 6: Hoàn tiền - REFUNDED
-      if (statusFilter === 'REFUNDED') {
-        const isRefunded = normalizedStatus === 'REFUNDED';
-        return matchesKeyword && isRefunded;
+      // Tab 5: Đã hủy - chỉ CANCELLED
+      if (statusFilter === 'CANCELLED') {
+        return matchesKeyword && normalizedStatus === 'CANCELLED';
       }
 
       return matchesKeyword;
@@ -1081,10 +1105,24 @@ function HistoryTab() {
     return totalPages;
   }, [filteredBookings.length, statusFilter, searchTerm, totalPages]);
 
-  // Reset về trang 1 khi thay đổi filter hoặc search
+  // Reset về trang 1 khi thay đổi từ khóa tìm kiếm
   useEffect(() => {
     setPage(1);
-  }, [statusFilter, searchTerm]);
+  }, [searchTerm]);
+
+  const handleStatusClick = (value: (typeof BOOKING_STATUS_FILTERS)[number]['value']) => {
+    setStatusFilter(value);
+    if (page !== 1) {
+      setPage(1);
+    }
+  };
+
+  const handleExtensionSuccess = () => {
+    if (selectedRentalId) {
+      fetchRentalDetail(selectedRentalId);
+      fetchRentalExtensions(selectedRentalId);
+    }
+  };
 
   useEffect(() => {
     if (!filteredBookings.length) {
@@ -1100,13 +1138,6 @@ function HistoryTab() {
     });
   }, [filteredBookings]);
 
-  // Determine which data to display based on filter
-  const isRefundTab = statusFilter === 'REFUNDED';
-  const currentError = isRefundTab ? refundsError : error;
-  const currentLoading = isRefundTab ? refundsLoading : loading;
-  const currentTotalPages = isRefundTab ? refundsTotalPages : adjustedTotalPages;
-  const currentRefetch = isRefundTab ? refetchRefunds : refetch;
-
   return (
     <div className="space-y-5">
       <Card>
@@ -1117,15 +1148,13 @@ function HistoryTab() {
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
-          {currentError && (
+          {error && (
             <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
               <AlertCircle className="h-4 w-4 mt-0.5" />
               <div>
-                <p className="font-semibold">
-                  {isRefundTab ? 'Không thể tải danh sách hoàn tiền' : 'Không thể tải danh sách booking'}
-                </p>
-                <p>{currentError}</p>
-                <Button variant="outline" size="sm" className="mt-2" onClick={currentRefetch}>
+                <p className="font-semibold">Không thể tải danh sách booking</p>
+                <p>{error}</p>
+                <Button variant="outline" size="sm" className="mt-2" onClick={refetch}>
                   Thử lại
                 </Button>
               </div>
@@ -1134,7 +1163,7 @@ function HistoryTab() {
 
           <div className="flex flex-col gap-3">
             <Input
-              placeholder={isRefundTab ? "Tìm kiếm hoàn tiền..." : "Tìm tên xe, mã booking..."}
+              placeholder="Tìm tên xe, mã booking..."
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
               className="sm:max-w-sm"
@@ -1144,7 +1173,7 @@ function HistoryTab() {
                 <button
                   key={item.value}
                   type="button"
-                  onClick={() => setStatusFilter(item.value)}
+                  onClick={() => handleStatusClick(item.value)}
                   className={`rounded-full border px-3 py-1 text-sm transition ${
                     statusFilter === item.value
                       ? 'border-blue-600 bg-blue-600 text-white'
@@ -1159,28 +1188,97 @@ function HistoryTab() {
         </CardContent>
       </Card>
 
-      {isRefundTab ? (
-        <RefundListPanel
-          refunds={refunds}
-          loading={currentLoading}
-          page={page}
-          totalPages={currentTotalPages}
-          onPageChange={setPage}
-        />
-      ) : (
-        <BookingListPanel
-          bookings={filteredBookings}
-          loading={loading}
-          page={page}
-          totalPages={adjustedTotalPages}
-          onPageChange={setPage}
-          selectedId={selectedBookingId}
-          onSelect={(id) => setSelectedBookingId(id)}
-          renderDetail={(bookingId) => (
-            <BookingDetailWorkspace bookingId={bookingId} onBookingUpdated={refetch} inline />
+      <BookingListPanel
+        bookings={filteredBookings}
+        loading={loading}
+        page={page}
+        totalPages={adjustedTotalPages}
+        onPageChange={setPage}
+        selectedId={selectedBookingId}
+        onSelect={(id) => setSelectedBookingId(id)}
+        renderDetail={(bookingId) => (
+          <BookingDetailWorkspace bookingId={bookingId} onBookingUpdated={refetch} inline />
+        )}
+      />
+    </div>
+  );
+}
+
+
+function RefundTab() {
+  const [page, setPage] = useState(1);
+  const [searchTerm, setSearchTerm] = useState('');
+  const { refunds, loading, error, totalPages, refetch } = useRefundList(page, BOOKING_LIST_LIMIT);
+
+  const filteredRefunds = useMemo(() => {
+    const keyword = searchTerm.trim().toLowerCase();
+    if (!keyword) return refunds;
+
+    return refunds.filter((refund) => {
+      const bookingMatch = refund.bookingId?.toLowerCase().includes(keyword);
+      const vehicleMatch = refund.vehicleName?.toLowerCase().includes(keyword);
+      return bookingMatch || vehicleMatch;
+    });
+  }, [refunds, searchTerm]);
+
+  const adjustedTotalPages = useMemo(() => {
+    if (searchTerm.trim()) {
+      return Math.max(1, Math.ceil(filteredRefunds.length / BOOKING_LIST_LIMIT));
+    }
+    return totalPages;
+  }, [filteredRefunds.length, searchTerm, totalPages]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm]);
+
+  const displayedRefunds = useMemo(() => {
+    if (!searchTerm.trim()) return filteredRefunds;
+    const start = (page - 1) * BOOKING_LIST_LIMIT;
+    return filteredRefunds.slice(start, start + BOOKING_LIST_LIMIT);
+  }, [filteredRefunds, page, searchTerm]);
+
+  return (
+    <div className="space-y-5">
+      <Card>
+        <CardHeader>
+          <CardTitle>Lịch sử hoàn tiền</CardTitle>
+          <p className="text-sm text-gray-600">
+            Theo dõi các yêu cầu hoàn tiền và trạng thái xử lý.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {error && (
+            <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              <AlertCircle className="h-4 w-4 mt-0.5" />
+              <div>
+                <p className="font-semibold">Không thể tải danh sách hoàn tiền</p>
+                <p>{error}</p>
+                <Button variant="outline" size="sm" className="mt-2" onClick={refetch}>
+                  Thử lại
+                </Button>
+              </div>
+            </div>
           )}
-        />
-      )}
+
+          <div className="flex flex-col gap-3">
+            <Input
+              placeholder="Tìm kiếm theo mã booking hoặc tên xe..."
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              className="sm:max-w-sm"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <RefundListPanel
+        refunds={displayedRefunds}
+        loading={loading}
+        page={page}
+        totalPages={adjustedTotalPages}
+        onPageChange={setPage}
+      />
     </div>
   );
 }
@@ -1255,6 +1353,322 @@ function BookingListPanel({
   );
 }
 
+function ReviewListPanel({
+  reviews,
+  loading,
+  page,
+  totalPages,
+  vehicleNames,
+  rentalNames,
+  onPageChange,
+  onUpdated
+}: {
+  reviews: ReviewData[];
+  loading: boolean;
+  page: number;
+  totalPages: number;
+  vehicleNames: Record<string, string>;
+  rentalNames: Record<string, string>;
+  onPageChange: (page: number) => void;
+  onUpdated?: () => void;
+}) {
+  const apiBase = import.meta.env.VITE_API_BASE_URL;
+  const [editingReview, setEditingReview] = useState<ReviewData | null>(null);
+  const [editForm, setEditForm] = useState({ rating: 5, title: '', content: '' });
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editExistingImages, setEditExistingImages] = useState<string[]>([]);
+  const [editNewImages, setEditNewImages] = useState<File[]>([]);
+  const editFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!editingReview) return;
+    setEditForm({
+      rating: Number(editingReview.rating) || 5,
+      title: editingReview.title || '',
+      content: editingReview.content || ''
+    });
+    const imgs = Array.isArray(editingReview.images) ? editingReview.images.filter(Boolean) : [];
+    setEditExistingImages(imgs.slice(0, 3));
+    setEditNewImages([]);
+  }, [editingReview]);
+
+  const handleUpdateReview = async () => {
+    if (!editingReview) return;
+    if (!apiBase) {
+      toast.error('Chưa cấu hình API');
+      return;
+    }
+    const ratingNumber = Number(editForm.rating);
+    if (!ratingNumber || ratingNumber < 1 || ratingNumber > 5) {
+      toast.error('Điểm đánh giá phải từ 1-5');
+      return;
+    }
+
+    let images = [...editExistingImages];
+    if (editNewImages.length) {
+      try {
+        const uploaded = await uploadLicenseImages(editNewImages);
+        images = images.concat(uploaded.filter(Boolean));
+      } catch (err) {
+        toast.error('Upload ảnh thất bại, vui lòng thử lại');
+        return;
+      }
+    }
+    images = images.slice(0, 3);
+
+    const payload: any = {
+      id: editingReview.id,
+      rating: ratingNumber,
+      title: editForm.title.trim() || 'Đánh giá',
+      content: editForm.content.trim(),
+      images,
+      type: editingReview.type ?? 'VEHICLE',
+      ...(editingReview.bookingId && { bookingId: editingReview.bookingId }),
+      ...(editingReview.vehicleId && { vehicleId: editingReview.vehicleId }),
+      ...((editingReview as any).rentalId && { rentalId: (editingReview as any).rentalId })
+    };
+
+    setEditSubmitting(true);
+    try {
+      const response = await fetch(`${apiBase}/review`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(result?.message || `HTTP ${response.status}`);
+      }
+      toast.success('Đã cập nhật đánh giá');
+      setEditingReview(null);
+      setEditExistingImages([]);
+      setEditNewImages([]);
+      onUpdated?.();
+    } catch (err) {
+      console.error('Update review error:', err);
+      toast.error(err instanceof Error ? err.message : 'Không thể cập nhật đánh giá');
+    } finally {
+      setEditSubmitting(false);
+    }
+  };
+
+  return (
+    <Card className="flex h-full flex-col">
+      <div className="flex items-center justify-between border-b px-4 py-3">
+        <div>
+          <p className="text-sm font-semibold text-gray-900">Danh sách đánh giá</p>
+          <p className="text-xs text-gray-500">
+            Trang {page}/{Math.max(totalPages, 1)}
+          </p>
+        </div>
+        <Badge variant="secondary">{reviews.length}</Badge>
+      </div>
+      <div className="flex-1 overflow-y-auto max-h-[32rem] pr-1">
+        {loading ? (
+          <div className="flex items-center justify-center py-10 text-sm text-gray-500">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Đang tải danh sách đánh giá...
+          </div>
+        ) : reviews.length === 0 ? (
+          <div className="px-4 py-6 text-center text-sm text-gray-500">
+            Không tìm thấy đánh giá nào.
+          </div>
+        ) : (
+          reviews.map((review) => {
+            const vehicleLabel = review.vehicleId ? vehicleNames[review.vehicleId] : null;
+            const rentalLabel = (review as any).rentalId ? rentalNames[(review as any).rentalId] : null;
+            return (
+              <div key={review.id} className="space-y-2 border-b last:border-b-0 px-4 py-3 hover:bg-gray-50 transition">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-semibold text-gray-900">{review.title || 'Đánh giá'}</p>
+                      <span className="text-xs text-gray-500">
+                        {formatVNDate(review.createdAt)}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-amber-600">
+                      <Star className="h-4 w-4 fill-amber-500 text-amber-500" />
+                      <span className="font-semibold">{review.rating || 0}/5</span>
+                      {review.bookingId && (
+                        <Badge variant="outline" className="text-[11px]">
+                          {review.bookingId.slice(0, 8)}...
+                        </Badge>
+                      )}
+                      {vehicleLabel && (
+                        <Badge variant="secondary" className="text-[11px]">
+                          Xe: {vehicleLabel}
+                        </Badge>
+                      )}
+                      {rentalLabel && (
+                        <Badge variant="secondary" className="text-[11px]">
+                          Thuê: {rentalLabel}
+                        </Badge>
+                      )}
+                    </div>
+                    {review.content && (
+                      <p className="text-sm text-gray-700">{review.content}</p>
+                    )}
+                  </div>
+                </div>
+                {Array.isArray(review.images) && review.images.length > 0 && (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-2">
+                    {review.images.slice(0, 3).map((url, idx) => (
+                      <img
+                        key={`${url}-${idx}`}
+                        src={url}
+                        alt={`Hình ảnh đánh giá ${idx + 1}`}
+                        className="h-20 w-full rounded-md object-cover border"
+                      />
+                    ))}
+                  </div>
+                )}
+                <div className="flex justify-end pt-2">
+                  <Button size="sm" variant="outline" onClick={() => setEditingReview(review)}>
+                    Chỉnh sửa
+                  </Button>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+      <div className="border-t px-4 py-3">
+        <PaginationControls page={page} totalPages={totalPages} onPageChange={onPageChange} />
+      </div>
+
+      <Dialog open={Boolean(editingReview)} onOpenChange={(open) => !open && setEditingReview(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Chỉnh sửa đánh giá</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div>
+                <Label>Điểm (1-5)</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={5}
+                  value={editForm.rating}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, rating: Number(e.target.value) }))}
+                />
+              </div>
+              <div>
+                <Label>Tiêu đề</Label>
+                <Input
+                  value={editForm.title}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, title: e.target.value }))}
+                  placeholder="Tiêu đề"
+                />
+              </div>
+            </div>
+            <div>
+              <Label>Nội dung</Label>
+              <Textarea
+                rows={4}
+                value={editForm.content}
+                onChange={(e) => setEditForm((prev) => ({ ...prev, content: e.target.value }))}
+                placeholder="Nội dung đánh giá"
+              />
+            </div>
+            {Array.isArray(editingReview?.images) && editingReview?.images.length > 0 && (
+              <div>
+                <Label>Ảnh hiện tại</Label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-2">
+                  {editExistingImages.map((url, idx) => (
+                    <img
+                      key={`${url}-${idx}`}
+                      src={url}
+                      alt={`Ảnh đánh giá ${idx + 1}`}
+                      className="h-20 w-full rounded-md object-cover border"
+                    />
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-2 pt-2">
+                  {editExistingImages.map((url) => (
+                    <div key={url} className="flex items-center gap-2 rounded border px-2 py-1 text-xs">
+                      <span className="max-w-[180px] truncate">{url}</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2"
+                        onClick={() => setEditExistingImages((prev) => prev.filter((item) => item !== url))}
+                      >
+                        Xóa
+                      </Button>
+                    </div>
+                  ))}
+                  {editExistingImages.length === 0 && <p className="text-sm text-gray-500">Không còn ảnh cũ.</p>}
+                </div>
+              </div>
+            )}
+            <div className="space-y-1">
+              <Label>Thêm ảnh mới (tối đa 3 tổng cộng)</Label>
+              <input
+                ref={editFileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/jpg,image/webp,image/heic,image/heif"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  const files = Array.from(e.target.files || []);
+                  const imageFiles = files.filter((file) => {
+                    const isImage = file.type.startsWith('image/');
+                    const isGif = file.type === 'image/gif';
+                    return isImage && !isGif;
+                  });
+
+                  if (imageFiles.length !== files.length) {
+                    toast.error('Chỉ hỗ trợ ảnh (jpg, png, webp...), không hỗ trợ GIF hoặc tệp khác.');
+                  }
+
+                  const maxAllowed = Math.max(0, 3 - editExistingImages.length);
+                  if (maxAllowed === 0) {
+                    toast.error('Đã đạt giới hạn 3 ảnh.');
+                    return;
+                  }
+
+                  if (imageFiles.length > maxAllowed) {
+                    toast.error('Chỉ được chọn tối đa 3 ảnh (tính cả ảnh cũ).');
+                  }
+
+                  const limited = imageFiles.slice(0, maxAllowed);
+                  setEditNewImages(limited);
+                }}
+              />
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => editFileInputRef.current?.click()}
+                >
+                  Chọn ảnh mới
+                </Button>
+                {editNewImages.length > 0 && (
+                  <p className="text-sm text-gray-600">
+                    Đã chọn {editNewImages.length} ảnh mới
+                  </p>
+                )}
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setEditingReview(null)} disabled={editSubmitting}>
+                Hủy
+              </Button>
+              <Button onClick={handleUpdateReview} disabled={editSubmitting}>
+                {editSubmitting ? 'Đang lưu...' : 'Lưu thay đổi'}
+              </Button>
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}
+
 function RefundListPanel({
   refunds,
   loading,
@@ -1296,12 +1710,13 @@ function RefundListPanel({
           <div className="px-4 py-6 text-center text-sm text-gray-500">
             Không tìm thấy yêu cầu hoàn tiền.
           </div>
-        ) : (
+          ) : (
           refunds.map((refund) => {
             const statusMeta = REFUND_STATUS_STYLES[refund.status] || {
               label: refund.status,
               className: 'bg-gray-100 text-gray-600'
             };
+            const bookingLabel = refund.bookingId ? `${refund.bookingId}` : '';
 
             return (
               <div key={refund.id} className="border-b last:border-b-0 p-4 hover:bg-gray-50 transition">
@@ -1309,7 +1724,7 @@ function RefundListPanel({
                   <div className="flex-1 space-y-2">
                     <div className="flex items-center gap-2">
                       <p className="text-sm font-semibold text-gray-900">
-                        Mã booking: {refund.bookingId.slice(0, 8)}...
+                        Mã booking: {bookingLabel ? `${bookingLabel.slice(0, 8)}...` : '—'}
                       </p>
                       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${statusMeta.className}`}>
                         {statusMeta.label}
@@ -1473,6 +1888,9 @@ function BookingDetailWorkspace({
     );
   }
 
+  const bookingStatus = (booking.status || '').toUpperCase();
+  const hasCheckedOut = bookingStatus === 'COMPLETED' || bookingStatus === 'CHECKED_OUT' || Boolean(booking.checkCompletion?.checkOut);
+
   const tabs = [
     {
       id: 'info',
@@ -1497,7 +1915,21 @@ function BookingDetailWorkspace({
       id: 'extension',
       label: 'Gia hạn thuê',
       content: (isActive: boolean) => (
-        <ExtensionSection bookingId={booking.id} booking={booking} isActive={isActive} onCompleted={handleRefresh} />
+        <ExtensionSection
+          bookingId={booking.id}
+          booking={booking}
+          isActive={isActive}
+          onCompleted={handleRefresh}
+          locked={hasCheckedOut}
+          lockedReason="Booking đã check-out/hoàn tất, không thể gia hạn."
+        />
+      )
+    },
+    {
+      id: 'review',
+      label: 'Đánh giá chuyến đi',
+      content: (isActive: boolean) => (
+        <ReviewSection booking={booking} onBookingUpdated={handleRefresh} isActive={isActive} />
       )
     }
   ];
@@ -1531,9 +1963,14 @@ function BookingDetailWorkspace({
         <div className="p-4">
           {isDesktop ? (
             <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TabKey)}>
-              <TabsList className="grid grid-cols-4">
+              <TabsList className="flex w-full flex-wrap gap-2 bg-muted p-2 h-auto">
                 {tabs.map((tab) => (
-                  <TabsTrigger key={tab.id} value={tab.id}>
+                  <TabsTrigger
+                    key={tab.id}
+                    value={tab.id}
+                    className="h-auto flex-1 whitespace-normal text-center py-2"
+                    disabled={tab.id === 'extension' && hasCheckedOut}
+                  >
                     {tab.label}
                   </TabsTrigger>
                 ))}
@@ -1818,6 +2255,247 @@ function BookingInfoSection({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+function ReviewSection({
+  booking,
+  onBookingUpdated,
+  isActive
+}: {
+  booking: BookingDetailData;
+  onBookingUpdated: () => void;
+  isActive: boolean;
+}) {
+  const apiBase = import.meta.env.VITE_API_BASE_URL;
+  const reviewId = booking.reviewId && booking.reviewId !== 'NULL' ? booking.reviewId : null;
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [reviewForm, setReviewForm] = useState({
+    rating: 5,
+    title: '',
+    content: ''
+  });
+  const [existingImages, setExistingImages] = useState<string[]>([]);
+  const [newImages, setNewImages] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    setReviewForm({ rating: 5, title: '', content: '' });
+    setExistingImages([]);
+    setNewImages([]);
+    setReviewError(null);
+  }, [booking.id]);
+
+  useEffect(() => {
+    const fetchReview = async () => {
+      if (!apiBase || !reviewId || !isActive) return;
+      setReviewLoading(true);
+      setReviewError(null);
+      try {
+        const response = await fetch(`${apiBase}/review/${reviewId}`, { credentials: 'include' });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const json = await response.json();
+        const payload = json.data ?? json;
+        const images = Array.isArray(payload.images) ? payload.images.filter(Boolean) : [];
+        setReviewForm({
+          rating: Number(payload.rating) || 5,
+          title: payload.title || '',
+          content: payload.content || ''
+        });
+        setExistingImages(images);
+      } catch (err) {
+        console.error('Load review error:', err);
+        setReviewError('Không thể tải đánh giá hiện có');
+      } finally {
+        setReviewLoading(false);
+      }
+    };
+    fetchReview();
+  }, [apiBase, reviewId, isActive]);
+
+  const handleSubmitReview = async () => {
+    if (!apiBase) {
+      toast.error('Chưa cấu hình API');
+      return;
+    }
+    const ratingNumber = Number(reviewForm.rating);
+    if (!ratingNumber || ratingNumber < 1 || ratingNumber > 5) {
+      toast.error('Điểm đánh giá phải từ 1-5');
+      return;
+    }
+    if (!booking.id) {
+      toast.error('Không tìm thấy mã booking');
+      return;
+    }
+    let images = [...existingImages];
+    if (newImages.length) {
+      try {
+        const uploaded = await uploadLicenseImages(newImages);
+        images = images.concat(uploaded.filter(Boolean));
+      } catch (err) {
+        toast.error('Upload ảnh thất bại, vui lòng thử lại');
+        return;
+      }
+    }
+    images = images.slice(0, 3);
+
+    const payload: any = {
+      bookingId: booking.id,
+      rating: ratingNumber,
+      title: reviewForm.title.trim() || 'Đánh giá',
+      type: 'VEHICLE',
+      content: reviewForm.content.trim(),
+      images
+    };
+    if (reviewId) {
+      payload.id = reviewId;
+    }
+
+    setReviewSubmitting(true);
+    try {
+      const response = await fetch(`${apiBase}/review`, {
+        method: reviewId ? 'PUT' : 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(result?.message || `HTTP ${response.status}`);
+      }
+      toast.success(reviewId ? 'Cập nhật đánh giá thành công' : 'Đã gửi đánh giá');
+      onBookingUpdated();
+    } catch (err) {
+      console.error('Submit review error:', err);
+      toast.error(err instanceof Error ? err.message : 'Không thể gửi đánh giá');
+    } finally {
+      setReviewSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-xs uppercase text-gray-500">Đánh giá chuyến đi</p>
+          {reviewId ? <Badge variant="secondary">Đã có đánh giá</Badge> : <Badge variant="outline">Chưa đánh giá</Badge>}
+        </div>
+        {reviewError && <p className="text-sm text-rose-600">{reviewError}</p>}
+        {reviewLoading ? (
+          <div className="flex items-center gap-2 text-sm text-gray-500">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Đang tải đánh giá...
+          </div>
+        ) : (
+          <div className="grid gap-3">
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div>
+                <Label>Điểm (1-5)</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={5}
+                  value={reviewForm.rating}
+                  onChange={(e) => setReviewForm((prev) => ({ ...prev, rating: Number(e.target.value) }))}
+                />
+              </div>
+              <div>
+                <Label>Tiêu đề</Label>
+                <Input
+                  value={reviewForm.title}
+                  onChange={(e) => setReviewForm((prev) => ({ ...prev, title: e.target.value }))}
+                  placeholder="Ví dụ: Trải nghiệm tuyệt vời"
+                />
+              </div>
+            </div>
+            <div>
+              <Label>Nội dung</Label>
+              <Textarea
+                rows={4}
+                value={reviewForm.content}
+                onChange={(e) => setReviewForm((prev) => ({ ...prev, content: e.target.value }))}
+                placeholder="Cảm nhận của bạn về chuyến đi"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Ảnh minh họa</Label>
+              <div className="flex flex-wrap gap-2">
+                {existingImages.map((url) => (
+                  <div key={url} className="flex items-center gap-2 rounded border px-2 py-1 text-xs">
+                    <span className="max-w-[180px] truncate">{url}</span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2"
+                      onClick={() => setExistingImages((prev) => prev.filter((item) => item !== url))}
+                    >
+                      Xóa
+                    </Button>
+                  </div>
+                ))}
+                {existingImages.length === 0 && <p className="text-sm text-gray-500">Chưa có ảnh.</p>}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/webp,image/heic,image/heif"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files || []);
+                    const imageFiles = files.filter((file) => {
+                      const isImage = file.type.startsWith('image/');
+                      const isGif = file.type === 'image/gif';
+                      return isImage && !isGif;
+                    });
+
+                    if (imageFiles.length !== files.length) {
+                      toast.error('Chỉ hỗ trợ ảnh (jpg, png, webp...), không hỗ trợ GIF hoặc tệp khác.');
+                    }
+
+                    const maxAllowed = Math.max(0, 3 - existingImages.length);
+                    if (maxAllowed === 0) {
+                      toast.error('Đã đạt giới hạn 3 ảnh.');
+                      return;
+                    }
+
+                    if (imageFiles.length > maxAllowed) {
+                      toast.error('Chỉ được chọn tối đa 3 ảnh cho mỗi đánh giá.');
+                    }
+
+                    const limited = imageFiles.slice(0, maxAllowed);
+                    setNewImages(limited);
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  Chọn ảnh từ máy
+                </Button>
+                {newImages.length > 0 && (
+                  <p className="text-sm text-gray-600">
+                    Đã chọn {newImages.length} ảnh (tối đa 3 gồm cả ảnh đã có)
+                  </p>
+                )}
+              </div>
+              <p className="text-xs text-gray-500">Ảnh sẽ được upload tự động khi gửi đánh giá.</p>
+            </div>
+            <div className="flex justify-end">
+              <Button onClick={handleSubmitReview} disabled={reviewSubmitting}>
+                {reviewSubmitting ? 'Đang gửi...' : reviewId ? 'Cập nhật đánh giá' : 'Gửi đánh giá'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -2315,12 +2993,16 @@ function ExtensionSection({
   bookingId,
   booking,
   isActive,
-  onCompleted
+  onCompleted,
+  locked,
+  lockedReason
 }: {
   bookingId?: string;
   booking?: BookingDetailData;
   isActive: boolean;
   onCompleted?: () => void;
+  locked?: boolean;
+  lockedReason?: string;
 }) {
   const extensionState = useExtensionHistory(bookingId, isActive);
 
@@ -2333,9 +3015,19 @@ function ExtensionSection({
     return <p className="text-sm text-gray-500">Chọn booking để gửi yêu cầu gia hạn.</p>;
   }
 
+  const status = (booking?.status || '').toUpperCase();
+  const isCheckedOut = locked || status === 'COMPLETED' || status === 'CHECKED_OUT' || Boolean(booking?.checkCompletion?.checkOut);
+  const extensionLockMessage = lockedReason || 'Booking đã check-out/hoàn tất, không thể gia hạn.';
+
   return (
     <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
-      <ExtensionForm bookingId={bookingId} booking={booking} onSuccess={handleSuccess} />
+      <ExtensionForm
+        bookingId={bookingId}
+        booking={booking}
+        onSuccess={handleSuccess}
+        locked={isCheckedOut}
+        lockedReason={extensionLockMessage}
+      />
       <ExtensionHistoryList
         records={extensionState.records}
         loading={extensionState.loading}
@@ -2348,11 +3040,15 @@ function ExtensionSection({
 function ExtensionForm({
   bookingId,
   booking,
-  onSuccess
+  onSuccess,
+  locked,
+  lockedReason
 }: {
   bookingId: string;
   booking?: BookingDetailData;
   onSuccess?: () => void;
+  locked?: boolean;
+  lockedReason?: string;
 }) {
   const apiBase = import.meta.env.VITE_API_BASE_URL;
   const [form, setForm] = useState({ newEndTime: '', notes: '' });
@@ -2367,6 +3063,10 @@ function ExtensionForm({
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (locked) {
+      toast.error(lockedReason || 'Booking đã check-out/hoàn tất, không thể gia hạn.');
+      return;
+    }
     if (!form.newEndTime) {
       toast.error('Vui lòng chọn thời gian kết thúc mới');
       return;
@@ -2405,6 +3105,11 @@ function ExtensionForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-3 rounded-xl border p-4">
       <p className="font-semibold text-gray-900">Gia hạn thuê</p>
+      {locked && (
+        <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
+          {lockedReason || 'Booking đã check-out/hoàn tất nên không thể gửi yêu cầu gia hạn.'}
+        </p>
+      )}
       <div>
         <Label htmlFor="extension-time">Thời gian kết thúc mới</Label>
         <Input
@@ -2413,6 +3118,7 @@ function ExtensionForm({
           value={form.newEndTime}
           onChange={(event) => setForm((prev) => ({ ...prev, newEndTime: event.target.value }))}
           min={booking?.endTime ? toLocalDateTimeInput(booking.endTime) : undefined}
+          disabled={locked}
         />
       </div>
       <div>
@@ -2423,9 +3129,10 @@ function ExtensionForm({
           value={form.notes}
           onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))}
           placeholder="Lý do gia hạn, nhu cầu thêm..."
+          disabled={locked}
         />
       </div>
-      <Button type="submit" className="w-full" disabled={submitting}>
+      <Button type="submit" className="w-full" disabled={submitting || locked}>
         {submitting ? 'Đang gửi...' : 'Gửi yêu cầu gia hạn'}
       </Button>
     </form>
@@ -2574,9 +3281,11 @@ function ExtensionPaymentNotice({ extension }: { extension: ExtensionRecord }) {
     return () => controller.abort();
   }, [apiBase, extension.additionalAmount, extension.bookingId, extension.id]);
 
-  const amount = payment?.amount ?? extension.additionalAmount ?? 0;
+  const amount = payment?.amount ?? extension.additionalAmount;
   const paymentCode = payment?.paymentCode ?? sanitizePaymentDescription(`EXT${extension.id}`);
-  const qrUrl = amount ? buildPaymentQrUrl(amount, paymentCode) : '';
+  const qrUrl = typeof amount === 'number' && amount > 0 ? buildPaymentQrUrl(amount, paymentCode) : '';
+  const isPaid = (payment?.status || '').toString().toUpperCase() === 'PAID';
+  const paidEndDate = extension.newEndTime ? formatVNDate(extension.newEndTime) : null;
 
   const copyText = async (value: string, label: string) => {
     if (!value) return;
@@ -2601,7 +3310,7 @@ function ExtensionPaymentNotice({ extension }: { extension: ExtensionRecord }) {
     }
   };
 
-  if (!amount) {
+  if (typeof amount !== 'number' || amount <= 0) {
     return <p className="text-xs text-gray-500">Không tìm thấy chi phí gia hạn.</p>;
   }
 
@@ -2611,50 +3320,68 @@ function ExtensionPaymentNotice({ extension }: { extension: ExtensionRecord }) {
         <QrCode className="h-4 w-4 mt-0.5" />
         <div>
           <p className="font-semibold text-amber-900">Thanh toán gia hạn</p>
-          <p className="text-xs text-amber-700">
-            Số tiền cần thanh toán thêm: <span className="font-semibold">{formatCurrency(amount)}</span>
-          </p>
-          {payment?.status && <p className="text-xs text-amber-700">Trạng thái: {payment.status}</p>}
+          {!isPaid && (
+            <>
+              <p className="text-xs text-amber-700">
+                Số tiền cần thanh toán thêm: <span className="font-semibold">{formatCurrency(amount)}</span>
+              </p>
+              {payment?.status && <p className="text-xs text-amber-700">Trạng thái: {payment.status}</p>}
+            </>
+          )}
           {loading && <p className="text-xs text-amber-700">Đang tải thông tin thanh toán...</p>}
           {error && <p className="text-xs text-red-600">{error}</p>}
-          <p className="text-xs text-amber-700 mt-1">
-            Bạn có thể thanh toán bất cứ lúc nào để áp dụng thời gian mới cho booking.
-          </p>
+          {isPaid && (
+            <div className="mt-2 rounded-md bg-green-50 border border-green-200 px-3 py-2 text-[13px] text-green-800">
+              Đơn gia hạn của bạn đã được thanh toán thành công.
+              {paidEndDate && (
+                <> Ngày kết thúc mới: <span className="font-semibold">{paidEndDate}</span>.</>
+              )}
+            </div>
+          )}
+          {!isPaid && (
+            <p className="text-xs text-amber-700 mt-1">
+              Bạn có thể thanh toán bất cứ lúc nào để áp dụng thời gian mới cho booking.
+            </p>
+          )}
         </div>
       </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        <div className="rounded-lg border border-amber-200 bg-white p-2">
-          <p className="text-[11px] uppercase text-gray-500">Nội dung chuyển khoản</p>
-          <p className="font-semibold text-gray-900">{paymentCode}</p>
-          <Button
-            type="button"
-            onClick={() => copyText(paymentCode, 'nội dung chuyển khoản')}
-            variant="ghost"
-            size="sm"
-            className="mt-1 h-7 px-2 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-          >
-            Sao chép
-          </Button>
-        </div>
-        <div className="rounded-lg border border-amber-200 bg-white p-2">
-          <p className="text-[11px] uppercase text-gray-500">Số tiền</p>
-          <p className="font-semibold text-gray-900">{formatCurrency(amount)}</p>
-          <Button
-            type="button"
-            onClick={() => copyText(amount.toString(), 'số tiền')}
-            variant="ghost"
-            size="sm"
-            className="mt-1 h-7 px-2 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-          >
-            Sao chép
-          </Button>
-        </div>
-      </div>
-      {qrUrl && (
-        <div className="rounded-lg border border-amber-200 bg-white p-2 text-center">
-          <p className="text-xs text-gray-500 mb-1">Quét QR để thanh toán</p>
-          <img src={qrUrl} alt="QR thanh toán gia hạn" className="mx-auto h-32 w-32 rounded-md border" />
-        </div>
+      {!isPaid && (
+        <>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="rounded-lg border border-amber-200 bg-white p-2">
+              <p className="text-[11px] uppercase text-gray-500">Nội dung chuyển khoản</p>
+              <p className="font-semibold text-gray-900">{paymentCode}</p>
+              <Button
+                type="button"
+                onClick={() => copyText(paymentCode, 'nội dung chuyển khoản')}
+                variant="ghost"
+                size="sm"
+                className="mt-1 h-7 px-2 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+              >
+                Sao chép
+              </Button>
+            </div>
+            <div className="rounded-lg border border-amber-200 bg-white p-2">
+              <p className="text-[11px] uppercase text-gray-500">Số tiền</p>
+              <p className="font-semibold text-gray-900">{formatCurrency(amount)}</p>
+              <Button
+                type="button"
+                onClick={() => copyText(amount.toString(), 'số tiền')}
+                variant="ghost"
+                size="sm"
+                className="mt-1 h-7 px-2 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+              >
+                Sao chép
+              </Button>
+            </div>
+          </div>
+          {qrUrl && (
+            <div className="rounded-lg border border-amber-200 bg-white p-2 text-center">
+              <p className="text-xs text-gray-500 mb-1">Quét QR để thanh toán</p>
+              <img src={qrUrl} alt="QR thanh toán gia hạn" className="mx-auto h-32 w-32 rounded-md border" />
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -2890,12 +3617,29 @@ function PaginationControls({
     </div>
   );
 }
-function useBookingList(page: number, limit: number) {
+function useBookingList(page: number, limit: number, status?: string | string[]) {
   const apiBase = import.meta.env.VITE_API_BASE_URL;
   const [bookings, setBookings] = useState<BookingSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [totalPages, setTotalPages] = useState(1);
+
+  const normalizedStatus = useMemo(() => {
+    if (!status) return { query: '', key: 'ALL' };
+
+    const toStatus = (value: string) => String(value || '').trim().toUpperCase();
+
+    if (Array.isArray(status)) {
+      const list = status.map(toStatus).filter(Boolean);
+      return {
+        query: list.length === 1 ? list[0] : '',
+        key: list.join('|') || 'ALL'
+      };
+    }
+
+    const single = toStatus(status);
+    return { query: single, key: single || 'ALL' };
+  }, [status]);
 
   const fetchBookings = useCallback(
     async (options?: { signal?: AbortSignal }) => {
@@ -2909,13 +3653,22 @@ function useBookingList(page: number, limit: number) {
       setLoading(true);
       setError(null);
       try {
-        const response = await fetch(`${apiBase}/booking?page=${page}&limit=${limit}`, {
+        const statusQuery = normalizedStatus.query ? `&status=${encodeURIComponent(normalizedStatus.query)}` : '';
+        const response = await fetch(`${apiBase}/booking?page=${page}&limit=${limit}${statusQuery}`, {
           credentials: 'include',
           signal: options?.signal
         });
         if (!response.ok) {
           const err = await response.json().catch(() => ({}));
-          throw new Error(err.message || `HTTP ${response.status}`);
+          const message = err?.message || `HTTP ${response.status}`;
+          if (response.status === 404 || message === 'Error.BookingNotFound') {
+            setBookings([]);
+            setTotalPages(1);
+            setError(null);
+            setLoading(false);
+            return;
+          }
+          throw new Error(message);
         }
         const json = await response.json();
         const payload = json.data ?? json;
@@ -2935,7 +3688,7 @@ function useBookingList(page: number, limit: number) {
         }
       }
     },
-    [apiBase, page, limit]
+    [apiBase, page, limit, normalizedStatus]
   );
 
   useEffect(() => {
@@ -3014,6 +3767,225 @@ function useRefundList(page: number, limit: number) {
     totalPages,
     refetch: () => fetchRefunds()
   };
+}
+
+function useReviewList(page: number, limit: number) {
+  const apiBase = import.meta.env.VITE_API_BASE_URL;
+  const [reviews, setReviews] = useState<ReviewData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [totalPages, setTotalPages] = useState(1);
+  const [vehicleNames, setVehicleNames] = useState<Record<string, string>>({});
+  const [rentalNames, setRentalNames] = useState<Record<string, string>>({});
+
+  const fetchReviews = useCallback(
+    async (options?: { signal?: AbortSignal }) => {
+      if (!apiBase) {
+        setError('Chưa cấu hình API');
+        setLoading(false);
+        setReviews([]);
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetch(`${apiBase}/review?page=${page}&limit=${limit}`, {
+          credentials: 'include',
+          signal: options?.signal
+        });
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({}));
+          throw new Error(err.message || `HTTP ${response.status}`);
+        }
+        const json = await response.json();
+        const payload = json.data ?? json;
+        const rawList = payload.reviews ?? payload.items ?? payload.data ?? payload.results ?? [];
+        const list = Array.isArray(rawList) ? rawList : [];
+        setReviews(list);
+        const totalItems = toNumber(payload.totalItems ?? payload.total) ?? list.length;
+        const computedPages = payload.totalPages || (totalItems ? Math.max(1, Math.ceil(totalItems / limit)) : 1);
+        setTotalPages(computedPages);
+      } catch (err) {
+        if (options?.signal?.aborted) return;
+        setError(err instanceof Error ? err.message : 'Không thể tải danh sách đánh giá');
+        setReviews([]);
+      } finally {
+        if (!options?.signal?.aborted) {
+          setLoading(false);
+        }
+      }
+    },
+    [apiBase, page, limit]
+  );
+
+  const resolveVehicleName = useCallback(
+    async (vehicleId: string) => {
+      if (!apiBase || !vehicleId || vehicleNames[vehicleId]) return;
+      try {
+        const response = await fetch(`${apiBase}/vehicle/${vehicleId}`, { credentials: 'include' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const json = await response.json();
+        const payload = json.data ?? json;
+        const name =
+          payload?.name ||
+          payload?.title ||
+          payload?.vehicleName ||
+          payload?.vehicle?.name ||
+          payload?.vehicle?.title ||
+          'Xe';
+        setVehicleNames((prev) => ({ ...prev, [vehicleId]: name }));
+      } catch (err) {
+        console.error('Fetch vehicle name error:', err);
+        setVehicleNames((prev) => ({ ...prev, [vehicleId]: 'Xe' }));
+      }
+    },
+    [apiBase, vehicleNames]
+  );
+
+  const resolveRentalName = useCallback(
+    async (rentalId: string) => {
+      if (!apiBase || !rentalId || rentalNames[rentalId]) return;
+      try {
+        const response = await fetch(`${apiBase}/rental/${rentalId}`, { credentials: 'include' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const json = await response.json();
+        const payload = json.data ?? json;
+        const name =
+          payload?.vehicleName ||
+          payload?.name ||
+          payload?.title ||
+          payload?.vehicle?.name ||
+          payload?.vehicle?.title ||
+          'Xe';
+        setRentalNames((prev) => ({ ...prev, [rentalId]: name }));
+      } catch (err) {
+        console.error('Fetch rental name error:', err);
+        setRentalNames((prev) => ({ ...prev, [rentalId]: 'Xe' }));
+      }
+    },
+    [apiBase, rentalNames]
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchReviews({ signal: controller.signal });
+    return () => controller.abort();
+  }, [fetchReviews]);
+
+  useEffect(() => {
+    const missingVehicles = Array.from(
+      new Set(
+        reviews
+          .map((r) => r.vehicleId)
+          .filter((id): id is string => Boolean(id) && !vehicleNames[id as string])
+      )
+    );
+    missingVehicles.forEach((id) => resolveVehicleName(id));
+
+    const missingRentals = Array.from(
+      new Set(
+        reviews
+          .map((r) => (r as any).rentalId || (r as any).rental_id)
+          .filter((id): id is string => Boolean(id) && !rentalNames[id as string])
+      )
+    );
+    missingRentals.forEach((id) => resolveRentalName(id));
+  }, [reviews, vehicleNames, rentalNames, resolveVehicleName, resolveRentalName]);
+
+  return {
+    reviews,
+    loading,
+    error,
+    totalPages,
+    vehicleNames,
+    rentalNames,
+    refetch: () => fetchReviews()
+  };
+}
+
+function ReviewTab() {
+  const [page, setPage] = useState(1);
+  const [searchTerm, setSearchTerm] = useState('');
+  const { reviews, loading, error, totalPages, vehicleNames, rentalNames, refetch } = useReviewList(
+    page,
+    BOOKING_LIST_LIMIT
+  );
+
+  const filteredReviews = useMemo(() => {
+    const keyword = searchTerm.trim().toLowerCase();
+    if (!keyword) return reviews;
+
+    return reviews.filter((review) => {
+      const matchesBooking = review.bookingId?.toLowerCase().includes(keyword);
+      const matchesTitle = review.title?.toLowerCase().includes(keyword);
+      const matchesContent = review.content?.toLowerCase().includes(keyword);
+      const matchesVehicle = review.vehicleId?.toLowerCase().includes(keyword);
+      return matchesBooking || matchesTitle || matchesContent || matchesVehicle;
+    });
+  }, [reviews, searchTerm]);
+
+  const adjustedTotalPages = useMemo(() => {
+    if (searchTerm.trim()) {
+      return Math.max(1, Math.ceil(filteredReviews.length / BOOKING_LIST_LIMIT));
+    }
+    return totalPages;
+  }, [filteredReviews.length, totalPages, searchTerm]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm]);
+
+  const displayedReviews = useMemo(() => {
+    if (!searchTerm.trim()) return filteredReviews;
+    const start = (page - 1) * BOOKING_LIST_LIMIT;
+    return filteredReviews.slice(start, start + BOOKING_LIST_LIMIT);
+  }, [filteredReviews, page, searchTerm]);
+
+  return (
+    <div className="space-y-5">
+      <Card>
+        <CardHeader>
+          <CardTitle>Đánh giá của tôi</CardTitle>
+          <p className="text-sm text-gray-600">Danh sách đánh giá bạn đã thực hiện.</p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {error && (
+            <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              <AlertCircle className="h-4 w-4 mt-0.5" />
+              <div>
+                <p className="font-semibold">Không thể tải danh sách đánh giá</p>
+                <p>{error}</p>
+                <Button variant="outline" size="sm" className="mt-2" onClick={refetch}>
+                  Thử lại
+                </Button>
+              </div>
+            </div>
+          )}
+
+          <div className="flex flex-col gap-3">
+            <Input
+              placeholder="Tìm tiêu đề, nội dung, mã booking..."
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              className="sm:max-w-sm"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <ReviewListPanel
+        reviews={displayedReviews}
+        loading={loading}
+        page={page}
+        totalPages={adjustedTotalPages}
+        vehicleNames={vehicleNames}
+        rentalNames={rentalNames}
+        onPageChange={setPage}
+        onUpdated={refetch}
+      />
+    </div>
+  );
 }
 
 const sanitizeComplaintId = (value: unknown): string => {
@@ -3607,6 +4579,10 @@ function mapBookingDetail(entry: any): BookingDetailData {
     rentalFee: toNumber(entry.rentalFee ?? entry.pricing?.rentalFee ?? entry.pricing?.rental),
     insuranceFee: toNumber(entry.insuranceFee ?? entry.pricing?.insuranceFee ?? entry.pricing?.insurance),
     deposit: toNumber(entry.deposit ?? entry.pricing?.deposit),
+    reviewId:
+      entry.reviewId === 'NULL'
+        ? null
+        : entry.reviewId ?? entry.review_id ?? entry.review?.id ?? null,
     notes: entry.notes ?? entry.note ?? entry.customerNotes,
     dropoffAddress: entry.dropoffAddress ?? entry.dropoff_address ?? entry.returnLocation,
     pickupLat: toNumber(entry.pickupLat ?? entry.pickup_lat ?? entry.pickupLatitude),
@@ -3807,19 +4783,20 @@ function EquipmentHistoryTab() {
   const [selectedRentalId, setSelectedRentalId] = useState<string | null>(null);
   const [selectedRentalDetail, setSelectedRentalDetail] = useState<any>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [detailTab, setDetailTab] = useState<'info' | 'extension'>('info');
-  const [extensions, setExtensions] = useState<any[]>([]);
+  const [detailTab, setDetailTab] = useState<'info' | 'extension' | 'review'>('info');
+  const [extensions, setExtensions] = useState<EquipmentExtension[]>([]);
   const [extensionLoading, setExtensionLoading] = useState(false);
   const apiBase = import.meta.env.VITE_API_BASE_URL;
   const limit = 10;
   const isDesktop = useMediaQuery('(min-width: 768px)');
 
-  const fetchRentals = async () => {
+  const fetchRentals = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const token = localStorage.getItem('accessToken');
-      const response = await fetch(`${apiBase}/rental?page=${page}&limit=${limit}`, {
+      const statusParam = statusFilter !== 'ALL' ? `&status=${encodeURIComponent(statusFilter)}` : '';
+      const response = await fetch(`${apiBase}/rental?page=${page}&limit=${limit}${statusParam}`, {
         credentials: 'include',
         headers: {
           ...(token && { 'Authorization': `Bearer ${token}` }),
@@ -3829,7 +4806,13 @@ function EquipmentHistoryTab() {
       if (!response.ok) throw new Error('Không thể tải lịch sử thuê thiết bị');
 
       const result = await response.json();
-      setRentals(result.data?.rentals || []);
+      const rentalsData = Array.isArray(result.data?.rentals) ? result.data.rentals : [];
+      const sortedRentals = [...rentalsData].sort((a, b) => {
+        const timeA = new Date(a?.createdAt || a?.startDate || 0).getTime();
+        const timeB = new Date(b?.createdAt || b?.startDate || 0).getTime();
+        return timeB - timeA;
+      });
+      setRentals(sortedRentals);
       setTotalPages(result.data?.totalPages || 1);
       setTotalItems(result.data?.totalItems || 0);
     } catch (err) {
@@ -3839,23 +4822,36 @@ function EquipmentHistoryTab() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [apiBase, limit, page, statusFilter]);
 
   const fetchRentalExtensions = async (rentalId: string) => {
     if (!apiBase) return;
     
     setExtensionLoading(true);
-    try {
-      const response = await fetch(`${apiBase}/rental/${rentalId}/extensions`, {
-        credentials: 'include'
-      });
+      try {
+        const token = localStorage.getItem('accessToken');
+        const response = await fetch(`${apiBase}/rental-extension/${rentalId}`, {
+          credentials: 'include',
+          headers: {
+            ...(token && { 'Authorization': `Bearer ${token}` })
+          }
+        });
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
 
-      const data = await response.json();
-      setExtensions(Array.isArray(data.data) ? data.data : Array.isArray(data) ? data : []);
+        const data = await response.json();
+        const payload = data.data ?? data;
+        const rawList = Array.isArray(payload)
+          ? payload
+          : Array.isArray(payload?.extensions)
+            ? payload.extensions
+          : Array.isArray(payload?.items)
+            ? payload.items
+            : [];
+        const normalized = rawList.map(mapEquipmentExtension);
+        setExtensions(normalized);
     } catch (err) {
       console.error('Error fetching extensions:', err);
       setExtensions([]);
@@ -3890,7 +4886,7 @@ function EquipmentHistoryTab() {
 
   useEffect(() => {
     fetchRentals();
-  }, [page]);
+  }, [fetchRentals]);
 
   // Fetch detail when selecting a rental
   useEffect(() => {
@@ -3908,6 +4904,20 @@ function EquipmentHistoryTab() {
   useEffect(() => {
     setPage(1);
   }, [statusFilter, searchTerm]);
+
+  const handleEquipmentExtensionSuccess = () => {
+    if (selectedRentalId) {
+      fetchRentalDetail(selectedRentalId);
+      fetchRentalExtensions(selectedRentalId);
+    }
+  };
+
+  const handleEquipmentCancelled = () => {
+    fetchRentals();
+    if (selectedRentalId) {
+      fetchRentalDetail(selectedRentalId);
+    }
+  };
 
   const filteredRentals = useMemo(() => {
     if (!Array.isArray(rentals)) return [];
@@ -3929,7 +4939,7 @@ function EquipmentHistoryTab() {
       }
 
       if (statusFilter === 'RECEIVED') {
-        return matchesKeyword && (normalizedStatus === 'RECEIVED' || normalizedStatus === 'PAID');
+        return matchesKeyword && normalizedStatus === 'RECEIVED';
       }
 
       if (statusFilter === 'COMPLETED') {
@@ -3937,7 +4947,7 @@ function EquipmentHistoryTab() {
       }
 
       if (statusFilter === 'CANCELLED') {
-        return matchesKeyword && (normalizedStatus === 'CANCELLED' || normalizedStatus === 'EXPIRED');
+        return matchesKeyword && normalizedStatus === 'CANCELLED';
       }
 
       return matchesKeyword;
@@ -4105,46 +5115,31 @@ function EquipmentHistoryTab() {
                         </div>
                       ) : selectedRentalDetail ? (
                         isDesktop ? (
-                          <Tabs value={detailTab} onValueChange={(value) => setDetailTab(value as 'info' | 'extension')}>
-                            <TabsList className="grid grid-cols-2 w-full max-w-md mb-4">
-                              <TabsTrigger value="info">Thông tin thuê</TabsTrigger>
-                              <TabsTrigger value="extension">Lịch sử gia hạn</TabsTrigger>
-                            </TabsList>
-                            <TabsContent value="info">
-                              <EquipmentDetailInfo rental={selectedRentalDetail} />
-                            </TabsContent>
-                            <TabsContent value="extension">
-                              <EquipmentExtensionList 
-                                extensions={extensions} 
-                                loading={extensionLoading}
-                                rentalId={selectedRentalId!}
-                              />
-                            </TabsContent>
-                          </Tabs>
+                          <EquipmentDetailTabs
+                            activeTab={detailTab}
+                            onTabChange={(value) => setDetailTab(value)}
+                            rental={selectedRentalDetail}
+                            rentalId={selectedRentalId!}
+                            extensions={extensions}
+                            extensionLoading={extensionLoading}
+                            onRefreshExtension={() => fetchRentalExtensions(selectedRentalId!)}
+                            onExtended={handleEquipmentExtensionSuccess}
+                            onCancelled={handleEquipmentCancelled}
+                            onReviewSubmitted={() => fetchRentalDetail(selectedRentalId!)}
+                          />
                         ) : (
-                          <Accordion
-                            type="single"
-                            collapsible
-                            value={detailTab}
-                            onValueChange={(value) => value && setDetailTab(value as 'info' | 'extension')}
-                          >
-                            <AccordionItem value="info">
-                              <AccordionTrigger>Thông tin thuê</AccordionTrigger>
-                              <AccordionContent>
-                                <EquipmentDetailInfo rental={selectedRentalDetail} />
-                              </AccordionContent>
-                            </AccordionItem>
-                            <AccordionItem value="extension">
-                              <AccordionTrigger>Lịch sử gia hạn</AccordionTrigger>
-                              <AccordionContent>
-                                <EquipmentExtensionList 
-                                  extensions={extensions} 
-                                  loading={extensionLoading}
-                                  rentalId={selectedRentalId!}
-                                />
-                              </AccordionContent>
-                            </AccordionItem>
-                          </Accordion>
+                          <EquipmentDetailAccordion
+                            activeTab={detailTab}
+                            onTabChange={(value) => setDetailTab(value)}
+                            rental={selectedRentalDetail}
+                            rentalId={selectedRentalId!}
+                            extensions={extensions}
+                            extensionLoading={extensionLoading}
+                            onRefreshExtension={() => fetchRentalExtensions(selectedRentalId!)}
+                            onExtended={handleEquipmentExtensionSuccess}
+                            onCancelled={handleEquipmentCancelled}
+                            onReviewSubmitted={() => fetchRentalDetail(selectedRentalId!)}
+                          />
                         )
                       ) : (
                         <div className="text-center py-6 text-sm text-gray-500">
@@ -4170,35 +5165,233 @@ function EquipmentHistoryTab() {
 }
 
 // Component hiển thị thông tin chi tiết đơn thuê
-function EquipmentDetailInfo({ rental }: { rental: any }) {
+type EquipmentDetailTabKey = 'info' | 'extension' | 'review';
+
+function EquipmentDetailTabs({
+  activeTab,
+  onTabChange,
+  rental,
+  rentalId,
+  extensions,
+  extensionLoading,
+  onRefreshExtension,
+  onExtended,
+  onCancelled,
+  onReviewSubmitted
+}: {
+  activeTab: EquipmentDetailTabKey;
+  onTabChange: (value: EquipmentDetailTabKey) => void;
+  rental: any;
+  rentalId: string;
+  extensions: EquipmentExtension[];
+  extensionLoading: boolean;
+  onRefreshExtension: () => void;
+  onExtended: () => void;
+  onCancelled: () => void;
+  onReviewSubmitted: () => void;
+}) {
+  const isCompleted = (rental?.status || '').toUpperCase() === 'COMPLETED';
+  const tabs: { id: EquipmentDetailTabKey; label: string; content: React.ReactNode }[] = [
+    {
+      id: 'info',
+      label: 'Thông tin thuê',
+      content: <EquipmentDetailInfo rental={rental} onCancelled={onCancelled} />
+    },
+    {
+      id: 'extension',
+      label: 'Gia hạn thuê',
+      content: (
+        <EquipmentExtensionPanel
+          rentalId={rentalId}
+          currentEndDate={rental?.endDate}
+          extensions={extensions}
+          loading={extensionLoading}
+          onRefresh={onRefreshExtension}
+          onExtended={onExtended}
+        />
+      )
+    }
+  ];
+
+  if (isCompleted) {
+    tabs.push({
+      id: 'review',
+      label: 'Đánh giá',
+      content: <EquipmentReviewSection rental={rental} isActive={activeTab === 'review'} onSubmitted={onReviewSubmitted} />
+    });
+  }
+
+  const safeValue = tabs.some((tab) => tab.id === activeTab) ? activeTab : tabs[0].id;
+
+  return (
+    <Tabs value={safeValue} onValueChange={(value) => onTabChange(value as EquipmentDetailTabKey)}>
+      <TabsList className="flex w-full flex-wrap gap-2 bg-muted p-2 h-auto">
+        {tabs.map((tab) => (
+          <TabsTrigger key={tab.id} value={tab.id} className="flex-1 whitespace-normal py-2">
+            {tab.label}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+      {tabs.map((tab) => (
+        <TabsContent key={tab.id} value={tab.id}>
+          {tab.content}
+        </TabsContent>
+      ))}
+    </Tabs>
+  );
+}
+
+function EquipmentDetailAccordion({
+  activeTab,
+  onTabChange,
+  rental,
+  rentalId,
+  extensions,
+  extensionLoading,
+  onRefreshExtension,
+  onExtended,
+  onCancelled,
+  onReviewSubmitted
+}: {
+  activeTab: EquipmentDetailTabKey;
+  onTabChange: (value: EquipmentDetailTabKey) => void;
+  rental: any;
+  rentalId: string;
+  extensions: EquipmentExtension[];
+  extensionLoading: boolean;
+  onRefreshExtension: () => void;
+  onExtended: () => void;
+  onCancelled: () => void;
+  onReviewSubmitted: () => void;
+}) {
+  const isCompleted = (rental?.status || '').toUpperCase() === 'COMPLETED';
+  const items: { id: EquipmentDetailTabKey; title: string; content: React.ReactNode }[] = [
+    {
+      id: 'info',
+      title: 'Thông tin thuê',
+      content: <EquipmentDetailInfo rental={rental} onCancelled={onCancelled} />
+    },
+    {
+      id: 'extension',
+      title: 'Gia hạn thuê',
+      content: (
+        <EquipmentExtensionPanel
+          rentalId={rentalId}
+          currentEndDate={rental?.endDate}
+          extensions={extensions}
+          loading={extensionLoading}
+          onRefresh={onRefreshExtension}
+          onExtended={onExtended}
+        />
+      )
+    }
+  ];
+
+  if (isCompleted) {
+    items.push({
+      id: 'review',
+      title: 'Đánh giá',
+      content: <EquipmentReviewSection rental={rental} isActive={activeTab === 'review'} onSubmitted={onReviewSubmitted} />
+    });
+  }
+
+  const safeValue = items.some((item) => item.id === activeTab) ? activeTab : items[0].id;
+
+  return (
+    <Accordion
+      type="single"
+      collapsible
+      value={safeValue}
+      onValueChange={(value) => value && onTabChange(value as EquipmentDetailTabKey)}
+    >
+      {items.map((item) => (
+        <AccordionItem key={item.id} value={item.id}>
+          <AccordionTrigger>{item.title}</AccordionTrigger>
+          <AccordionContent>{item.content}</AccordionContent>
+        </AccordionItem>
+      ))}
+    </Accordion>
+  );
+}
+
+function EquipmentDetailInfo({ rental, onCancelled }: { rental: any; onCancelled?: () => void }) {
+  const apiBase = import.meta.env.VITE_API_BASE_URL;
+  const status = (rental?.status || '').toUpperCase();
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelLoading, setCancelLoading] = useState(false);
+
+  const canCancel = status === 'PENDING' || status === 'PAID';
+
+  const handleCancel = async () => {
+    if (!rental?.id) return;
+    if (!cancelReason.trim()) {
+      toast.error('Vui lòng nhập lý do hủy');
+      return;
+    }
+    setCancelLoading(true);
+    try {
+      const token = localStorage.getItem('accessToken');
+      const response = await fetch(`${apiBase}/rental/cancel/${rental.id}`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token && { Authorization: `Bearer ${token}` })
+        },
+        body: JSON.stringify({ reason: cancelReason })
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || `HTTP ${response.status}`);
+      }
+      toast.success('Đã hủy đơn thuê thiết bị');
+      setCancelOpen(false);
+      setCancelReason('');
+      onCancelled?.();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Không thể hủy đơn');
+    } finally {
+      setCancelLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
-      <div>
-        <h4 className="text-sm font-semibold text-gray-900 mb-3">Chi tiết đơn thuê</h4>
-        <div className="grid grid-cols-2 gap-4 text-sm">
-          <div>
-            <p className="text-gray-500">Phí thuê</p>
-            <p className="font-medium">
-              {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(rental.rentalFee || 0)}
-            </p>
-          </div>
-          <div>
-            <p className="text-gray-500">Tiền cọc</p>
-            <p className="font-medium">
-              {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(rental.deposit || 0)}
-            </p>
-          </div>
-          <div>
-            <p className="text-gray-500">Tổng số lượng</p>
-            <p className="font-medium">{rental.totalQuantity || 0}</p>
-          </div>
-          {rental.actualEndDate && (
-            <div>
-              <p className="text-gray-500">Ngày trả thực tế</p>
-              <p className="font-medium">{formatVNDate(rental.actualEndDate)}</p>
-            </div>
-          )}
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h4 className="text-sm font-semibold text-gray-900 mb-3">Chi tiết đơn thuê</h4>
         </div>
+        {canCancel && (
+          <Button size="sm" variant="outline" onClick={() => setCancelOpen(true)}>
+            Hủy đơn
+          </Button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 text-sm">
+        <div>
+          <p className="text-gray-500">Phí thuê</p>
+          <p className="font-medium">
+            {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(rental.rentalFee || 0)}
+          </p>
+        </div>
+        <div>
+          <p className="text-gray-500">Tiền cọc</p>
+          <p className="font-medium">
+            {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(rental.deposit || 0)}
+          </p>
+        </div>
+        <div>
+          <p className="text-gray-500">Tổng số lượng</p>
+          <p className="font-medium">{rental.totalQuantity || 0}</p>
+        </div>
+        {rental.actualEndDate && (
+          <div>
+            <p className="text-gray-500">Ngày trả thực tế</p>
+            <p className="font-medium">{formatVNDate(rental.actualEndDate)}</p>
+          </div>
+        )}
       </div>
 
       {rental.items && rental.items.length > 0 && (
@@ -4245,20 +5438,490 @@ function EquipmentDetailInfo({ rental }: { rental: any }) {
           </div>
         </div>
       )}
+
+      <Dialog open={cancelOpen} onOpenChange={setCancelOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Hủy đơn thuê thiết bị</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-gray-600">Nhập lý do để xử lý nhanh hơn.</p>
+            <Textarea
+              rows={4}
+              value={cancelReason}
+              onChange={(event) => setCancelReason(event.target.value)}
+              placeholder="Lý do hủy..."
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCancelOpen(false)}>
+              Đóng
+            </Button>
+            <Button onClick={handleCancel} disabled={cancelLoading}>
+              {cancelLoading ? 'Đang gửi...' : 'Xác nhận hủy'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function EquipmentReviewSection({
+  rental,
+  isActive,
+  onSubmitted
+}: {
+  rental: any;
+  isActive: boolean;
+  onSubmitted: () => void;
+}) {
+  const apiBase = import.meta.env.VITE_API_BASE_URL;
+  const reviewId = rental?.reviewId && rental.reviewId !== 'NULL' ? rental.reviewId : null;
+  const status = (rental?.status || '').toUpperCase();
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [pendingRefresh, setPendingRefresh] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [reviewForm, setReviewForm] = useState({
+    rating: 5,
+    title: '',
+    content: ''
+  });
+  const [existingImages, setExistingImages] = useState<string[]>([]);
+  const [newImages, setNewImages] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const canReview = status === 'COMPLETED' && (!reviewId || editing) && !pendingRefresh;
+
+  useEffect(() => {
+    setReviewForm({ rating: 5, title: '', content: '' });
+    setExistingImages([]);
+    setNewImages([]);
+    setReviewError(null);
+    setPendingRefresh(false);
+    setEditing(false);
+  }, [rental?.id]);
+
+  useEffect(() => {
+    if (reviewId) {
+      setPendingRefresh(false);
+      setEditing(false);
+    }
+  }, [reviewId]);
+
+  useEffect(() => {
+    const fetchReview = async () => {
+      if (!apiBase || !reviewId || !isActive) return;
+      setReviewLoading(true);
+      setReviewError(null);
+      try {
+        const response = await fetch(`${apiBase}/review/${reviewId}`, { credentials: 'include' });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const json = await response.json();
+        const payload = json.data ?? json;
+        const images = Array.isArray(payload.images) ? payload.images.filter(Boolean) : [];
+        setReviewForm({
+          rating: Number(payload.rating) || 5,
+          title: payload.title || '',
+          content: payload.content || ''
+        });
+        setExistingImages(images);
+      } catch (err) {
+        console.error('Load review error:', err);
+        setReviewError('Không thể tải đánh giá hiện có');
+      } finally {
+        setReviewLoading(false);
+      }
+    };
+    fetchReview();
+  }, [apiBase, reviewId, isActive]);
+
+  const handleSubmitReview = async () => {
+    if (!apiBase) {
+      toast.error('Chưa cấu hình API');
+      return;
+    }
+    const ratingNumber = Number(reviewForm.rating);
+    if (!ratingNumber || ratingNumber < 1 || ratingNumber > 5) {
+      toast.error('Điểm đánh giá phải từ 1-5');
+      return;
+    }
+    if (!rental?.id) {
+      toast.error('Không tìm thấy mã đơn thuê');
+      return;
+    }
+    if (!canReview) {
+      toast.error('Chỉ có thể đánh giá khi đơn đã hoàn tất.');
+      return;
+    }
+
+    let images = [...existingImages];
+    if (newImages.length) {
+      try {
+        const uploaded = await uploadLicenseImages(newImages);
+        images = images.concat(uploaded.filter(Boolean));
+      } catch (err) {
+        toast.error('Upload ảnh thất bại, vui lòng thử lại');
+        return;
+      }
+    }
+    images = images.slice(0, 3);
+
+    const payload: any = {
+      rentalId: rental.id,
+      rating: ratingNumber,
+      title: reviewForm.title.trim() || 'Đánh giá',
+      type: 'DEVICE',
+      content: reviewForm.content.trim(),
+      images,
+      ...(reviewId && { id: reviewId })
+    };
+
+    setReviewSubmitting(true);
+    try {
+      const response = await fetch(`${apiBase}/review`, {
+        method: reviewId ? 'PUT' : 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(result?.message || `HTTP ${response.status}`);
+      }
+      toast.success(reviewId ? 'Đã cập nhật đánh giá thiết bị' : 'Đã gửi đánh giá thiết bị');
+      setReviewForm({
+        rating: ratingNumber,
+        title: reviewForm.title.trim() || 'Đánh giá',
+        content: reviewForm.content.trim()
+      });
+      setExistingImages(images);
+      setNewImages([]);
+      setPendingRefresh(!reviewId);
+      setEditing(false);
+      onSubmitted();
+    } catch (err) {
+      console.error('Submit review error:', err);
+      toast.error(err instanceof Error ? err.message : 'Không thể gửi đánh giá');
+    } finally {
+      setReviewSubmitting(false);
+    }
+  };
+
+  const renderStars = (value: number) => (
+    <div className="flex items-center gap-1">
+      {[...Array(5)].map((_, idx) => (
+        <Star
+          key={idx}
+          className={`h-4 w-4 ${idx < value ? 'fill-yellow-400 text-yellow-400' : 'text-gray-300'}`}
+        />
+      ))}
+      <span className="text-sm font-medium text-gray-700">{value}/5</span>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4 rounded-xl border bg-white p-4">
+      <div className="flex items-center justify-between">
+        <p className="text-xs uppercase text-gray-500">Đánh giá đơn thuê thiết bị</p>
+        {reviewId ? <Badge variant="secondary">Đã đánh giá</Badge> : <Badge variant="outline">Chưa đánh giá</Badge>}
+      </div>
+
+      {status !== 'COMPLETED' && (
+        <p className="text-sm text-gray-600">Chỉ có thể gửi đánh giá sau khi đơn đã hoàn tất.</p>
+      )}
+
+      {reviewError && <p className="text-sm text-rose-600">{reviewError}</p>}
+
+      {pendingRefresh && !reviewId && (
+        <div className="text-sm text-blue-700 bg-blue-50 border border-blue-100 rounded-lg p-3">
+          Đã gửi đánh giá, đang tải lại thông tin...
+        </div>
+      )}
+
+      {reviewId && !editing && (
+        reviewLoading ? (
+          <div className="flex items-center gap-2 text-sm text-gray-500">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Đang tải đánh giá...
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {renderStars(reviewForm.rating)}
+            {reviewForm.title && <p className="font-semibold text-gray-900">{reviewForm.title}</p>}
+            {reviewForm.content && <p className="text-sm text-gray-700 whitespace-pre-line">{reviewForm.content}</p>}
+            {existingImages.length > 0 && (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {existingImages.map((url, idx) => (
+                  <img
+                    key={url}
+                    src={url}
+                    alt={`Ảnh đánh giá ${idx + 1}`}
+                    className="h-24 w-full rounded-md object-cover border"
+                  />
+                ))}
+              </div>
+            )}
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-gray-500">Bạn đã đánh giá đơn này.</p>
+              {status === 'COMPLETED' && (
+                <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
+                  Chỉnh sửa
+                </Button>
+              )}
+            </div>
+          </div>
+        )
+      )}
+
+      {(!reviewId || editing) && (
+        <div className="space-y-3">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div>
+              <Label>Điểm (1-5)</Label>
+              <Input
+                type="number"
+                min={1}
+                max={5}
+                value={reviewForm.rating}
+                onChange={(e) => setReviewForm((prev) => ({ ...prev, rating: Number(e.target.value) }))}
+                disabled={!canReview}
+              />
+            </div>
+            <div>
+              <Label>Tiêu đề</Label>
+              <Input
+                value={reviewForm.title}
+                onChange={(e) => setReviewForm((prev) => ({ ...prev, title: e.target.value }))}
+                placeholder="Ví dụ: Trải nghiệm thiết bị tốt"
+                disabled={!canReview}
+              />
+            </div>
+          </div>
+          <div>
+            <Label>Nội dung</Label>
+            <Textarea
+              rows={4}
+              value={reviewForm.content}
+              onChange={(e) => setReviewForm((prev) => ({ ...prev, content: e.target.value }))}
+              placeholder="Cảm nhận của bạn về thiết bị"
+              disabled={!canReview}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Ảnh minh họa</Label>
+            <div className="flex flex-wrap gap-2">
+              {existingImages.map((url) => (
+                <div key={url} className="flex items-center gap-2 rounded border px-2 py-1 text-xs">
+                  <span className="max-w-[180px] truncate">{url}</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2"
+                    onClick={() => setExistingImages((prev) => prev.filter((item) => item !== url))}
+                    disabled={!canReview}
+                  >
+                    Xóa
+                  </Button>
+                </div>
+              ))}
+              {existingImages.length === 0 && <p className="text-sm text-gray-500">Chưa có ảnh.</p>}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/jpg,image/webp,image/heic,image/heif"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  const files = Array.from(e.target.files || []);
+                  const imageFiles = files.filter((file) => {
+                    const isImage = file.type.startsWith('image/');
+                    const isGif = file.type === 'image/gif';
+                    return isImage && !isGif;
+                  });
+
+                  if (imageFiles.length !== files.length) {
+                    toast.error('Chỉ hỗ trợ ảnh (jpg, png, webp...), không hỗ trợ GIF hoặc tệp khác.');
+                  }
+
+                  const maxAllowed = Math.max(0, 3 - existingImages.length);
+                  if (maxAllowed === 0) {
+                    toast.error('Đã đạt giới hạn 3 ảnh.');
+                    return;
+                  }
+
+                  if (imageFiles.length > maxAllowed) {
+                    toast.error('Chỉ được chọn tối đa 3 ảnh cho mỗi đánh giá.');
+                  }
+
+                  const limited = imageFiles.slice(0, maxAllowed);
+                  setNewImages(limited);
+                }}
+                disabled={!canReview}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={!canReview}
+              >
+                Chọn ảnh từ máy
+              </Button>
+              {newImages.length > 0 && (
+                <p className="text-sm text-gray-600">Đã chọn {newImages.length} ảnh (tối đa 3 gồm cả ảnh đã có)</p>
+              )}
+            </div>
+            <p className="text-xs text-gray-500">Ảnh sẽ được upload tự động khi gửi đánh giá.</p>
+          </div>
+          <div className="flex justify-end">
+            <Button onClick={handleSubmitReview} disabled={reviewSubmitting || !canReview}>
+              {reviewSubmitting ? 'Đang gửi...' : reviewId ? 'Cập nhật đánh giá' : 'Gửi đánh giá'}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EquipmentExtensionPanel({
+  rentalId,
+  currentEndDate,
+  extensions,
+  loading,
+  onRefresh,
+  onExtended
+}: {
+  rentalId: string;
+  currentEndDate?: string;
+  extensions: EquipmentExtension[];
+  loading: boolean;
+  onRefresh?: () => void;
+  onExtended?: () => void;
+}) {
+  const apiBase = import.meta.env.VITE_API_BASE_URL;
+  const [newEndDate, setNewEndDate] = useState<string>('');
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    setNewEndDate(currentEndDate ? toDateInputValue(currentEndDate) : '');
+  }, [currentEndDate, rentalId]);
+
+  const handleSubmit = async () => {
+    if (!newEndDate) {
+      toast.error('Vui lòng chọn ngày kết thúc mới');
+      return;
+    }
+    if (!apiBase) {
+      toast.error('Chưa cấu hình API');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const token = localStorage.getItem('accessToken');
+      const response = await fetch(`${apiBase}/rental-extension`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token && { 'Authorization': `Bearer ${token}` })
+        },
+        body: JSON.stringify({
+          rentalId,
+          newEndDate
+        })
+      });
+
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(result?.message || `HTTP ${response.status}`);
+      }
+
+      toast.success('Đã gửi yêu cầu gia hạn thuê');
+      onExtended?.();
+      onRefresh?.();
+    } catch (err) {
+      console.error('Extend rental error:', err);
+      toast.error(err instanceof Error ? err.message : 'Không thể gia hạn thuê');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const minDate = currentEndDate ? toDateInputValue(currentEndDate) : undefined;
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border p-4 space-y-3 bg-white">
+        <div className="flex items-center justify-between">
+          <p className="font-semibold text-gray-900">Gia hạn thuê</p>
+          {onRefresh && (
+            <Button variant="ghost" size="sm" onClick={onRefresh} disabled={submitting}>
+              Làm mới
+            </Button>
+          )}
+        </div>
+        <div className="grid gap-3 sm:grid-cols-[240px_auto] items-end">
+          <div>
+            <Label htmlFor="equipment-extension-date">Ngày kết thúc mới</Label>
+            <Input
+              id="equipment-extension-date"
+              type="date"
+              value={newEndDate}
+              min={minDate}
+              onChange={(e) => setNewEndDate(e.target.value)}
+            />
+            {currentEndDate && (
+              <p className="mt-1 text-xs text-gray-500">
+                Hiện tại: {formatVNDate(currentEndDate)}
+              </p>
+            )}
+          </div>
+          <Button
+            className="w-full sm:w-auto"
+            onClick={handleSubmit}
+            disabled={submitting || !newEndDate}
+          >
+            {submitting ? 'Đang gửi...' : 'Gửi gia hạn'}
+          </Button>
+        </div>
+        <p className="text-xs text-gray-500">
+          Lưu ý: Ngày kết thúc mới cần sau ngày kết thúc hiện tại.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-semibold text-gray-900">Lịch sử yêu cầu gia hạn</p>
+          {onRefresh && (
+            <Button variant="ghost" size="sm" onClick={onRefresh} disabled={loading}>
+              Làm mới
+            </Button>
+          )}
+        </div>
+        <EquipmentExtensionList extensions={extensions} loading={loading} rentalId={rentalId} />
+      </div>
     </div>
   );
 }
 
 // Component hiển thị lịch sử gia hạn của đơn thuê
-function EquipmentExtensionList({ extensions, loading, rentalId }: { extensions: any[]; loading: boolean; rentalId: string }) {
-  const getExtensionStatusBadge = (status: string) => {
-    const styles: Record<string, { label: string; className: string }> = {
-      PENDING: { label: 'Chờ xử lý', className: 'bg-amber-100 text-amber-700' },
-      APPROVED: { label: 'Đã duyệt', className: 'bg-green-100 text-green-700' },
-      REJECTED: { label: 'Từ chối', className: 'bg-red-100 text-red-700' },
-      COMPLETED: { label: 'Hoàn tất', className: 'bg-blue-100 text-blue-700' }
-    };
-    const config = styles[status] || { label: status, className: 'bg-gray-100 text-gray-600' };
+function EquipmentExtensionList({ extensions, loading, rentalId }: { extensions: EquipmentExtension[]; loading: boolean; rentalId: string }) {
+    const getExtensionStatusBadge = (status: string) => {
+      const styles: Record<string, { label: string; className: string }> = {
+        PENDING: { label: 'Yêu cầu đang chờ duyệt', className: 'bg-amber-100 text-amber-700' },
+        APPROVED: { label: 'Đã duyệt', className: 'bg-green-100 text-green-700' },
+        REJECTED: { label: 'Từ chối', className: 'bg-red-100 text-red-700' },
+        COMPLETED: { label: 'Hoàn tất', className: 'bg-blue-100 text-blue-700' }
+      };
+      const config = styles[status] || { label: status, className: 'bg-gray-100 text-gray-600' };
     return <Badge className={config.className}>{config.label}</Badge>;
   };
 
@@ -4274,52 +5937,100 @@ function EquipmentExtensionList({ extensions, loading, rentalId }: { extensions:
   if (extensions.length === 0) {
     return (
       <div className="py-6 text-center text-sm text-gray-500">
-        Chưa có lịch sử gia hạn cho đơn này
+        Chưa có gia hạn nào cho đơn này
       </div>
     );
   }
 
   return (
     <div className="space-y-3">
-      {extensions.map((ext) => (
-        <div key={ext.id} className="bg-white rounded-lg p-4 border">
-          <div className="flex items-start justify-between mb-3">
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1">
-                {getExtensionStatusBadge(ext.status)}
+      {extensions.map((ext) => {
+        const mapped = mapEquipmentExtensionToRecord(ext, rentalId);
+        const showPayment = ['APPROVED', 'COMPLETED'].includes((mapped.status || '').toUpperCase());
+        const amount = mapped.additionalAmount ?? ext.additionalFee;
+
+        return (
+          <div key={mapped.id} className="bg-white rounded-lg p-4 border space-y-3">
+            <div className="flex items-start justify-between">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-1">
+                  {getExtensionStatusBadge(mapped.status || '')}
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Ngày tạo: {formatVNTime(mapped.createdAt)}
+                </p>
               </div>
-              <p className="text-xs text-gray-500 mt-1">
-                Ngày tạo: {formatVNTime(ext.createdAt)}
-              </p>
+              <div className="text-right">
+                {typeof amount === 'number' && amount > 0 ? (
+                  <p className="text-lg font-semibold text-blue-600">
+                    {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(amount)}
+                  </p>
+                ) : (
+                  <p className="text-sm text-gray-500">Chưa có chi phí</p>
+                )}
+              </div>
             </div>
-            <div className="text-right">
-              <p className="text-lg font-semibold text-blue-600">
-                {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(ext.additionalFee || 0)}
-              </p>
-            </div>
-          </div>
 
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <p className="text-gray-500">Ngày kết thúc cũ</p>
-              <p className="font-medium">{formatVNDate(ext.oldEndDate)}</p>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <p className="text-gray-500">Ngày kết thúc cũ</p>
+                <p className="font-medium">{formatVNDate(mapped.originalEndTime)}</p>
+              </div>
+              <div>
+                <p className="text-gray-500">Ngày kết thúc mới</p>
+                <p className="font-medium text-green-600">{formatVNDate(mapped.newEndTime)}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-gray-500">Ngày kết thúc mới</p>
-              <p className="font-medium text-green-600">{formatVNDate(ext.newEndDate)}</p>
-            </div>
-          </div>
 
-          {ext.reason && (
-            <div className="mt-3 pt-3 border-t">
-              <p className="text-xs text-gray-500">Lý do:</p>
-              <p className="text-sm text-gray-700 mt-1">{ext.reason}</p>
-            </div>
-          )}
-        </div>
-      ))}
+            {mapped.notes && (
+              <div className="pt-3 border-t">
+                <p className="text-xs text-gray-500">Lý do:</p>
+                <p className="text-sm text-gray-700 mt-1">{mapped.notes}</p>
+              </div>
+            )}
+
+            {showPayment ? (
+              <div className="pt-3 border-t">
+                <ExtensionPaymentNotice extension={mapped} />
+              </div>
+            ) : (
+              <p className="text-xs text-gray-500">
+                Thanh toán gia hạn sẽ hiển thị khi yêu cầu được duyệt.
+              </p>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
+}
+
+function mapEquipmentExtension(entry: any): EquipmentExtension {
+  return {
+    id: String(entry?.paymentId ?? entry?.id ?? entry?.extensionId ?? entry?.rentalExtensionId ?? entry?.newEndDate ?? entry?.createdAt ?? Math.random()),
+    status: (entry?.status || '').toString().toUpperCase(),
+    oldEndDate: toDateISOString(entry?.oldEndDate ?? entry?.previousEndDate ?? entry?.originalEndDate ?? entry?.startDate ?? entry?.currentEndDate),
+    newEndDate: toDateISOString(entry?.newEndDate ?? entry?.endDate ?? entry?.updatedEndDate),
+    additionalFee: toNumber(entry?.additionalFee ?? entry?.additionalAmount ?? entry?.amount ?? entry?.price),
+    reason: entry?.reason ?? entry?.notes ?? '',
+    createdAt: toDateISOString(entry?.createdAt ?? entry?.created_at ?? entry?.timestamp),
+    paymentId: entry?.paymentId ?? entry?.paymentCode ?? entry?.payment_id
+  };
+}
+
+function mapEquipmentExtensionToRecord(ext: EquipmentExtension, rentalId: string): ExtensionRecord {
+  return {
+    id: String(ext.paymentId || ext.id || `${rentalId}-${ext.newEndDate || ext.createdAt || Date.now()}`),
+    bookingId: rentalId,
+    newEndTime: toDateISOString(ext.newEndDate),
+    originalEndTime: toDateISOString(ext.oldEndDate),
+    additionalHours: undefined,
+    additionalAmount: toNumber(ext.additionalFee),
+    status: ext.status,
+    notes: ext.reason,
+    createdAt: toDateISOString(ext.createdAt),
+    approvedBy: undefined
+  };
 }
 
 function PaymentTab() {

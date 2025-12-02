@@ -14,16 +14,12 @@ interface PresignedUrlResponse {
  */
 async function getPresignedUrl(filename: string): Promise<{ presignedUrl: string; url: string }> {
   try {
-    console.log('Requesting presigned URL for filename:', filename);
-    
     // Get cookies from document.cookie and parse them
     const cookies = document.cookie.split(';').reduce((acc, cookie) => {
       const [name, value] = cookie.trim().split('=');
       acc[name] = value;
       return acc;
     }, {} as Record<string, string>);
-    
-    console.log('Available cookies:', Object.keys(cookies));
     
     const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/media/presigned`, {
       method: 'POST',
@@ -47,7 +43,6 @@ async function getPresignedUrl(filename: string): Promise<{ presignedUrl: string
     }
 
     const result: PresignedUrlResponse = await response.json();
-    console.log('Received presigned URL response:', result);
     
     return {
       presignedUrl: result.data.presignedUrl,
@@ -64,9 +59,6 @@ async function getPresignedUrl(filename: string): Promise<{ presignedUrl: string
  */
 async function uploadFileToPresignedUrl(file: File, presignedUrl: string): Promise<void> {
   try {
-    console.log('Uploading file to presigned URL:', presignedUrl);
-    console.log('File type:', file.type, 'File size:', file.size);
-
     // Send the raw file (matches Postman binary upload)
     const response = await fetch(presignedUrl, {
       method: 'PUT',
@@ -84,7 +76,6 @@ async function uploadFileToPresignedUrl(file: File, presignedUrl: string): Promi
       console.error('Upload failed:', response.status, responseText);
       throw new Error(`Upload failed: ${response.status}`);
     }
-    console.log('File uploaded successfully!');
   } catch (error) {
     console.error('Error uploading file to presigned URL:', error);
     throw new Error('Không thể upload file');
@@ -111,11 +102,7 @@ async function uploadFileWithXHR(file: File, presignedUrl: string): Promise<void
     xhr.open('PUT', presignedUrl);
     
     xhr.onload = function() {
-      console.log('XHR Upload response status:', xhr.status);
-      console.log('XHR Upload response:', xhr.responseText);
-      
       if (xhr.status >= 200 && xhr.status < 300) {
-        console.log('XHR Upload successful!');
         resolve();
       } else {
         reject(new Error(`XHR Upload failed: ${xhr.status} - ${xhr.responseText}`));
@@ -136,20 +123,12 @@ async function uploadFileWithXHR(file: File, presignedUrl: string): Promise<void
  */
 export async function debugPostmanFlow(file: File): Promise<void> {
   try {
-    console.log('🔥 TESTING EXACT POSTMAN FLOW 🔥');
-    
     // Step 1: Get presigned URL (like first curl command)
-    console.log('Step 1: Getting presigned URL...');
     const filename = generateUniqueFilename(file.name);
-    console.log('Generated filename:', filename);
     
     const { presignedUrl, url } = await getPresignedUrl(filename);
-    console.log('Got presigned URL:', presignedUrl);
-    console.log('Final URL will be:', url);
     
     // Step 2: Upload file exactly like second curl command
-    console.log('Step 2: Uploading file with exact Postman headers...');
-    
     // Convert to ArrayBuffer (binary data like Postman)
     const arrayBuffer = await file.arrayBuffer();
     
@@ -174,12 +153,7 @@ export async function debugPostmanFlow(file: File): Promise<void> {
       }
     });
     
-    console.log('Upload response status:', response.status);
-    console.log('Upload response headers:', Object.fromEntries(response.headers.entries()));
-    
     if (response.ok) {
-      console.log('🎉 POSTMAN FLOW SUCCESSFUL! 🎉');
-      console.log('Final image URL:', url);
     } else {
       const errorText = await response.text();
       console.error('❌ Upload failed:', response.status, errorText);

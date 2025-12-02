@@ -40,6 +40,7 @@ type StoredBookingSession = {
 const QR_BASE_URL = 'https://qr.sepay.vn/img';
 const BOOKING_SESSION_STORAGE_KEY = 'hacmieu_vehicle_booking_sessions';
 const DRIVER_LICENSE_ERROR_CODE = 'Error.DriverLicenseNotVerified';
+const DRIVER_LICENSE_NOT_FOUND_CODE = 'Error.DriverLicenseNotFound';
 const DRIVER_LICENSE_ERROR_MESSAGE =
   'Tài khoản chưa xác thực giấy phép lái xe nên không được phép thuê xe. Vui lòng cập nhật GPLX tại trang hồ sơ.';
 
@@ -150,6 +151,7 @@ export function BookingProcess() {
   const [bookingId, setBookingId] = useState<string | null>(null);
   const [bookingRequestInFlight, setBookingRequestInFlight] = useState(false);
   const [fatalBookingError, setFatalBookingError] = useState<string | null>(null);
+  const [driverLicenseChecking, setDriverLicenseChecking] = useState(false);
   const [paymentDetails, setPaymentDetails] = useState<PaymentDetails | null>(null);
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState<'idle' | 'waiting' | 'confirmed' | 'failed'>('idle');
@@ -228,6 +230,45 @@ export function BookingProcess() {
   const rentalHours = Math.max(bookingData.rentalDuration?.hours || initialHoursRef.current, 1);
   const durationLabel = formatDurationLabel(rentalHours);
 
+  const ensureDriverLicenseVerified = useCallback(async () => {
+    if (!apiBase) return true;
+    setDriverLicenseChecking(true);
+    try {
+      const response = await fetch(`${apiBase}/user/driver-license`, {
+        credentials: 'include'
+      });
+
+      if (response.status === 404) {
+        throw new Error(DRIVER_LICENSE_ERROR_MESSAGE);
+      }
+
+      if (!response.ok) {
+        throw new Error(DRIVER_LICENSE_ERROR_MESSAGE);
+      }
+
+      const json = await response.json();
+      const payload = json.data || json;
+      const isVerified =
+        payload?.isVerified ??
+        payload?.verified ??
+        (payload?.status || '').toString().toUpperCase() === 'VERIFIED';
+
+      if (!isVerified) {
+        throw new Error(DRIVER_LICENSE_ERROR_MESSAGE);
+      }
+
+      setFatalBookingError(null);
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : DRIVER_LICENSE_ERROR_MESSAGE;
+      setFatalBookingError(message);
+      toast.error(message);
+      return false;
+    } finally {
+      setDriverLicenseChecking(false);
+    }
+  }, [apiBase]);
+
   const clearSessionState = useCallback(() => {
     if (derivedVehicleId) {
       persistStoredSession(derivedVehicleId, null);
@@ -250,9 +291,13 @@ export function BookingProcess() {
 
   useEffect(() => {
     if (storedSession && currentStep === 1) {
-      setCurrentStep(2);
+      ensureDriverLicenseVerified().then((ok) => {
+        if (ok) {
+          setCurrentStep(2);
+        }
+      });
     }
-  }, [storedSession, currentStep]);
+  }, [storedSession, currentStep, ensureDriverLicenseVerified]);
 
   useEffect(() => {
     if (!derivedVehicleId) return;
@@ -498,8 +543,6 @@ export function BookingProcess() {
         notes: `Thuê xe ${bookingData.vehicle.name} - ${bookingData.vehicle.type === 'CAR' ? 'Ô tô' : 'Xe máy'}`
       };
 
-      console.log('Creating booking with payload:', bookingPayload);
-
       const response = await fetch(
         `${import.meta.env.VITE_API_BASE_URL}/booking`,
         {
@@ -514,7 +557,6 @@ export function BookingProcess() {
 
       if (response.ok) {
         const bookingResult = await response.json();
-        console.log('Booking created successfully:', bookingResult);
         return bookingResult;
       } else {
         const errorData = await response.json().catch(() => ({}));
@@ -522,7 +564,9 @@ export function BookingProcess() {
         const serverMessage = errorData?.message || '';
         if (
           serverMessage === DRIVER_LICENSE_ERROR_CODE ||
-          serverMessage?.includes('DriverLicenseNotVerified')
+          serverMessage === DRIVER_LICENSE_NOT_FOUND_CODE ||
+          serverMessage?.includes('DriverLicenseNotVerified') ||
+          serverMessage?.includes('DriverLicenseNotFound')
         ) {
           throw new Error(DRIVER_LICENSE_ERROR_MESSAGE);
         }
@@ -730,7 +774,7 @@ export function BookingProcess() {
     setFatalBookingError(null);
   };
 
-  const handleNextStep = () => {
+  const handleNextStep = async () => {
     if (currentStep === 1) {
       if (!bookingData.startDate || !bookingData.endDate) {
         toast.error('Vui lòng chọn ngày thuê xe');
@@ -744,6 +788,8 @@ export function BookingProcess() {
         toast.error('Xe đang được giữ chỗ. Vui lòng chọn xe khác hoặc thử lại sau.');
         return;
       }
+      const verified = await ensureDriverLicenseVerified();
+      if (!verified) return;
       setCurrentStep(2);
     }
   };
@@ -1079,7 +1125,7 @@ export function BookingProcess() {
                 <Button
                   onClick={handleNextStep}
                   className="w-full"
-                  disabled={!bookingData.agreementAccepted || vehicleHeldByOther}
+                  disabled={!bookingData.agreementAccepted || vehicleHeldByOther || driverLicenseChecking}
                 >
                   Tiếp tục thanh toán
                 </Button>

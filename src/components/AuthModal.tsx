@@ -225,14 +225,11 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
 
       // FIX: Nếu API không trả token trong body (cookie-based auth), verify session và lấy user data
       if (!accessToken) {
-        console.log('[AuthModal] No token in response body, waiting for cookie to be set...');
-
         // Wait a bit to ensure cookies are properly set by the browser
         await new Promise(resolve => setTimeout(resolve, 200));
 
         // Try to get user profile directly (this verifies the session cookie is valid)
         try {
-          console.log('[AuthModal] Fetching user profile to verify session...');
           const profileResponse = await fetch(`${apiBaseUrl}/user/profile`, {
             method: 'GET',
             credentials: 'include',
@@ -242,7 +239,6 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
             const profileResult = await profileResponse.json();
             cookieSessionProfile =
               profileResult?.user ?? profileResult?.data ?? profileResult ?? null;
-            console.log('[AuthModal] Cookie session verified, user:', cookieSessionProfile);
 
             // Session is valid, we can use cookie-based auth
             resolvedUserPayload = cookieSessionProfile;
@@ -252,7 +248,6 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
             console.error('[AuthModal] Profile error body:', errorText);
 
             // If profile fails, try refresh-token as backup
-            console.log('[AuthModal] Trying refresh-token endpoint as backup...');
             try {
               const refreshResponse = await fetch(`${apiBaseUrl}/auth/refresh-token`, {
                 method: 'POST',
@@ -264,13 +259,10 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
 
               if (refreshResponse.ok) {
                 const refreshResult = await refreshResponse.json();
-                console.log('[AuthModal] Refresh-token response:', refreshResult);
 
                 const tokens = refreshResult?.data ?? refreshResult;
                 accessToken = tokens?.accessToken ?? tokens?.access_token ?? tokens?.token ?? null;
                 refreshToken = tokens?.refreshToken ?? tokens?.refresh_token ?? null;
-
-                console.log('[AuthModal] Extracted tokens - accessToken:', accessToken ? 'exists' : 'null', 'refreshToken:', refreshToken ? 'exists' : 'null');
               } else {
                 console.error('[AuthModal] Refresh-token also failed with status:', refreshResponse.status);
               }
@@ -286,12 +278,10 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
       // Lưu token vào localStorage nếu có
       if (accessToken) {
         localStorage.setItem('accessToken', accessToken);
-        console.log('[AuthModal] Access token saved to localStorage');
         // FIX: Dùng helper function để dispatch cả 2 events
         dispatchTokenChangeEvent(accessToken);
       } else if (cookieSessionProfile) {
         // FIX: Nếu API dùng pure cookie-based auth, dispatch event với flag đặc biệt
-        console.log('[AuthModal] Cookie-based auth verified, dispatching cookieAuth event');
         localStorage.setItem('cookieAuth', 'true');
 
         // Dispatch cookieAuth storage event riêng
@@ -314,7 +304,6 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
 
       if (refreshToken) {
         localStorage.setItem('refreshToken', refreshToken);
-        console.log('[AuthModal] Refresh token saved to localStorage');
       }
 
       toast.success('Đăng nhập thành công!');
@@ -365,7 +354,6 @@ export function AuthModal({ mode: initialMode, onClose, onSuccess }: AuthModalPr
         return;
       }
 
-      console.log('Register successful, user data:', result); // Debug
       toast.success('Đăng ký thành công!');
       onSuccess(result.user || result); // Fallback nếu không có result.user
       onClose(); // Đóng modal sau khi đăng ký thành công

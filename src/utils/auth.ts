@@ -1,7 +1,6 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 export const dispatchTokenChangeEvent = (token: string | null) => {
   if (typeof window !== 'undefined') {
-    console.log('[Auth] Dispatching token change event:', token ? 'Token exists' : 'Token removed');
     window.dispatchEvent(
       new CustomEvent('accessTokenChanged', {
         detail: { token },
@@ -22,10 +21,6 @@ export const dispatchTokenChangeEvent = (token: string | null) => {
 // Refresh access token
 export const refreshAccessToken = async (): Promise<boolean> => {
   if (typeof window !== 'undefined' && localStorage.getItem('cookieAuth') === 'true') {
-    console.log(
-      '[Auth] Cookie-based auth detected, verifying session via profile endpoint'
-    );
-
     // Verify cookie session is still valid by checking profile endpoint
     try {
       const profileResponse = await fetch(`${API_BASE_URL}/user/profile`, {
@@ -34,7 +29,6 @@ export const refreshAccessToken = async (): Promise<boolean> => {
       });
 
       if (profileResponse.ok) {
-        console.log('[Auth] Cookie session verified successfully');
         return true;
       } else {
         console.error('[Auth] Cookie session invalid, status:', profileResponse.status);
@@ -72,12 +66,10 @@ export const refreshAccessToken = async (): Promise<boolean> => {
 
     if (accessToken) {
       localStorage.setItem('accessToken', accessToken);
-      console.log('[Auth] Access token updated');
       dispatchTokenChangeEvent(accessToken);
     } else {
       const cookieAuth = localStorage.getItem('cookieAuth');
       if (cookieAuth === 'true') {
-        console.log('[Auth] Cookie-based auth refresh successful');
       } else {
         dispatchTokenChangeEvent(null);
       }
@@ -96,11 +88,13 @@ export const refreshAccessToken = async (): Promise<boolean> => {
 // Logout function
 export const logout = async (): Promise<boolean> => {
   try {
+    const token = localStorage.getItem('accessToken');
     const response = await fetch(`${API_BASE_URL}/auth/logout`, {
       method: 'POST',
       credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     });
 
@@ -110,7 +104,6 @@ export const logout = async (): Promise<boolean> => {
     dispatchTokenChangeEvent(null);
 
     if (response.ok) {
-      console.log('[Auth] Logout successful');
       return true;
     } else {
       console.error('[Auth] Logout failed:', response.status);
@@ -125,9 +118,6 @@ export const logout = async (): Promise<boolean> => {
 
 export const setupTokenRefresh = (onTokenExpired?: () => void): number | null => {
   if (typeof window !== 'undefined' && localStorage.getItem('cookieAuth') === 'true') {
-    console.log(
-      '[Auth] Cookie-based auth detected, skipping automatic token refresh'
-    );
     return null;
   }
 

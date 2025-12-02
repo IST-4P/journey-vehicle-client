@@ -4,6 +4,7 @@ import {
   Route,
   BrowserRouter as Router,
   Routes,
+  useNavigate,
 } from "react-router-dom";
 import { toast, Toaster } from "sonner";
 import { AboutUs } from "./components/AboutUs";
@@ -50,6 +51,26 @@ interface User {
     fullName?: string;
   };
   creditScore?: number;
+}
+
+function LogoutRoute({ onLogout }: { onLogout: () => Promise<void> | void }) {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    (async () => {
+      try {
+        await onLogout();
+      } finally {
+        navigate("/", { replace: true });
+      }
+    })();
+  }, [onLogout, navigate]);
+
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600"></div>
+    </div>
+  );
 }
 
 export default function App() {
@@ -110,9 +131,6 @@ export default function App() {
           const cookieAuth = localStorage.getItem("cookieAuth");
 
           if (currentToken && typeof window !== "undefined") {
-            console.log(
-              "[App] User authenticated, dispatching accessTokenChanged event"
-            );
             window.dispatchEvent(
               new CustomEvent("accessTokenChanged", {
                 detail: { token: currentToken },
@@ -120,9 +138,6 @@ export default function App() {
             );
           } else if (cookieAuth === "true" && typeof window !== "undefined") {
             // FIX: Cookie-based auth detected
-            console.log(
-              "[App] User authenticated with cookie-based auth, dispatching event"
-            );
             window.dispatchEvent(
               new CustomEvent("accessTokenChanged", {
                 detail: { token: "COOKIE_AUTH" },
@@ -138,7 +153,6 @@ export default function App() {
           });
         } else {
           // Nếu không lấy được profile, user chưa đăng nhập
-          console.log("No valid session found");
         }
       } catch (error) {
         console.error("Session check error:", error);
@@ -231,6 +245,7 @@ export default function App() {
               path="/complaint/:id"
               element={user ? <ComplaintDetail /> : <Navigate to="/" replace />}
             />
+            <Route path="/logout" element={<LogoutRoute onLogout={handleLogout} />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

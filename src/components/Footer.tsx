@@ -19,6 +19,10 @@ export function Footer() {
               HacMieu Journey là nền tảng thuê phương tiện hàng đầu Việt Nam, 
               cung cấp dịch vụ thuê xe ô tô và xe máy an toàn, tiện lợi với giá cả hợp lý.
             </p>
+            <div className="flex items-start space-x-2 text-sm text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 mb-4">
+              <span className="font-semibold">Lưu ý:</span>
+              <span>Đây là trang web demo phục vụ đồ án học tập, không phải dịch vụ hoạt động thực tế.</span>
+            </div>
             <div className="flex space-x-4">
               <a href="#" className="text-gray-300 hover:text-white">
                 <Facebook className="h-5 w-5" />
@@ -49,6 +53,16 @@ export function Footer() {
               <li>
                 <Link to="/motorcycles" className="text-gray-300 hover:text-white">
                   Thuê xe máy
+                </Link>
+              </li>
+              <li>
+                <Link to="/equipment" className="text-gray-300 hover:text-white">
+                  Thuê thiết bị
+                </Link>
+              </li>
+              <li>
+                <Link to="/combos" className="text-gray-300 hover:text-white">
+                  Combo thiết bị
                 </Link>
               </li>
               <li>

@@ -5,23 +5,44 @@ const ERROR_IMG_SRC =
 
 export function ImageWithFallback(props: React.ImgHTMLAttributes<HTMLImageElement>) {
   const [didError, setDidError] = useState(false)
+  const { src, alt, style, className, onError, ...rest } = props
 
-  const handleError = () => {
-    setDidError(true)
-  }
+  const normalizedSrc =
+    typeof src === 'string' && src.trim() === '' ? undefined : src
 
-  const { src, alt, style, className, ...rest } = props
-
-  return didError ? (
+  const renderPlaceholder = () => (
     <div
       className={`inline-block bg-gray-100 text-center align-middle ${className ?? ''}`}
       style={style}
     >
       <div className="flex items-center justify-center w-full h-full">
-        <img src={ERROR_IMG_SRC} alt="Error loading image" {...rest} data-original-url={src} />
+        <img
+          src={ERROR_IMG_SRC}
+          alt={alt ?? 'Image not available'}
+          data-original-url={src ?? ''}
+          {...rest}
+        />
       </div>
     </div>
-  ) : (
-    <img src={src} alt={alt} className={className} style={style} {...rest} onError={handleError} />
+  )
+
+  const handleError = (event: React.SyntheticEvent<HTMLImageElement, Event>) => {
+    setDidError(true)
+    onError?.(event)
+  }
+
+  if (!normalizedSrc || didError) {
+    return renderPlaceholder()
+  }
+
+  return (
+    <img
+      src={normalizedSrc}
+      alt={alt}
+      className={className}
+      style={style}
+      {...rest}
+      onError={handleError}
+    />
   )
 }
