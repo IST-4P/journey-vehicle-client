@@ -6753,12 +6753,6 @@ function ComplaintsTab() {
 }
 
 function PasswordTab() {
-  const [passwords, setPasswords] = useState({
-    current: '',
-    new: '',
-    confirm: ''
-  });
-  const [isLoading, setIsLoading] = useState(false);
   const [otpState, setOtpState] = useState({
     email: '',
     code: '',
@@ -6768,51 +6762,6 @@ function PasswordTab() {
     otpSent: false,
     resetting: false
   });
-
-  const handleChangePassword = async () => {
-    if (!passwords.current || !passwords.new || !passwords.confirm) {
-      toast.error('Vui lòng điền đầy đủ thông tin');
-      return;
-    }
-
-    if (passwords.new !== passwords.confirm) {
-      toast.error('Mật khẩu mới không khớp');
-      return;
-    }
-
-    if (passwords.new.length < 6) {
-      toast.error('Mật khẩu mới phải có ít nhất 6 ký tự');
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/auth/change-password`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          currentPassword: passwords.current,
-          newPassword: passwords.new
-        })
-      });
-
-      if (response.ok) {
-        toast.success('Mật khẩu đã được thay đổi thành công');
-        setPasswords({ current: '', new: '', confirm: '' });
-      } else {
-        const error = await response.json();
-        toast.error(error.message || 'Có lỗi xảy ra khi đổi mật khẩu');
-      }
-    } catch (error) {
-      console.error('Error changing password:', error);
-      toast.error('Có lỗi xảy ra khi đổi mật khẩu');
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   const handleSendOtp = async () => {
     if (!otpState.email.trim()) {
@@ -6892,115 +6841,73 @@ function PasswordTab() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Đổi / Quên mật khẩu</CardTitle>
+        <CardTitle>Quên mật khẩu</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="grid gap-6 md:grid-cols-2">
-          <div className="space-y-4">
-            <p className="text-sm font-semibold text-gray-900">Đổi mật khẩu (đang đăng nhập)</p>
-            <div>
-              <Label htmlFor="currentPassword">Mật khẩu hiện tại</Label>
-              <Input
-                id="currentPassword"
-                type="password"
-                value={passwords.current}
-                onChange={(e) => setPasswords({...passwords, current: e.target.value})}
-                className="mt-1"
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="newPassword">Mật khẩu mới</Label>
-              <Input
-                id="newPassword"
-                type="password"
-                value={passwords.new}
-                onChange={(e) => setPasswords({...passwords, new: e.target.value})}
-                className="mt-1"
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="confirmPassword">Xác nhận mật khẩu mới</Label>
-              <Input
-                id="confirmPassword"
-                type="password"
-                value={passwords.confirm}
-                onChange={(e) => setPasswords({...passwords, confirm: e.target.value})}
-                className="mt-1"
-              />
-            </div>
-
-            <Button onClick={handleChangePassword} className="w-full" disabled={isLoading}>
-              {isLoading ? 'Đang đổi mật khẩu...' : 'Đổi mật khẩu'}
-            </Button>
+        <div className="space-y-4 max-w-xl">
+          <p className="text-sm font-semibold text-gray-900">Quên mật khẩu (OTP)</p>
+          <div>
+            <Label htmlFor="otpEmail">Email</Label>
+            <Input
+              id="otpEmail"
+              type="email"
+              value={otpState.email}
+              onChange={(e) => setOtpState((prev) => ({ ...prev, email: e.target.value }))}
+              className="mt-1"
+              placeholder="Nhập email đã đăng ký"
+              disabled={otpState.resetting}
+            />
           </div>
-
-          <div className="space-y-4 border-t pt-4 md:border-t-0 md:border-l md:pl-6">
-            <p className="text-sm font-semibold text-gray-900">Quên mật khẩu (OTP)</p>
-            <div>
-              <Label htmlFor="otpEmail">Email</Label>
+          <div className="flex gap-2 items-end">
+            <div className="flex-1">
+              <Label htmlFor="otpCode">Mã OTP</Label>
               <Input
-                id="otpEmail"
-                type="email"
-                value={otpState.email}
-                onChange={(e) => setOtpState((prev) => ({ ...prev, email: e.target.value }))}
+                id="otpCode"
+                value={otpState.code}
+                onChange={(e) => setOtpState((prev) => ({ ...prev, code: e.target.value }))}
                 className="mt-1"
-                placeholder="Nhập email đã đăng ký"
-                disabled={otpState.resetting}
-              />
-            </div>
-            <div className="flex gap-2 items-end">
-              <div className="flex-1">
-                <Label htmlFor="otpCode">Mã OTP</Label>
-                <Input
-                  id="otpCode"
-                  value={otpState.code}
-                  onChange={(e) => setOtpState((prev) => ({ ...prev, code: e.target.value }))}
-                  className="mt-1"
-                  placeholder="Nhập mã OTP"
-                  disabled={otpState.resetting}
-                />
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleSendOtp}
-                disabled={otpState.sendingOtp || !otpState.email.trim()}
-              >
-                {otpState.sendingOtp ? 'Đang gửi...' : otpState.otpSent ? 'Gửi lại' : 'Gửi OTP'}
-              </Button>
-            </div>
-            <div>
-              <Label htmlFor="otpNewPassword">Mật khẩu mới</Label>
-              <Input
-                id="otpNewPassword"
-                type="password"
-                value={otpState.newPassword}
-                onChange={(e) => setOtpState((prev) => ({ ...prev, newPassword: e.target.value }))}
-                className="mt-1"
-                disabled={otpState.resetting}
-              />
-            </div>
-            <div>
-              <Label htmlFor="otpConfirmPassword">Xác nhận mật khẩu mới</Label>
-              <Input
-                id="otpConfirmPassword"
-                type="password"
-                value={otpState.confirmNewPassword}
-                onChange={(e) => setOtpState((prev) => ({ ...prev, confirmNewPassword: e.target.value }))}
-                className="mt-1"
+                placeholder="Nhập mã OTP"
                 disabled={otpState.resetting}
               />
             </div>
             <Button
-              onClick={handleResetPassword}
-              className="w-full"
-              disabled={otpState.resetting}
+              type="button"
+              variant="outline"
+              onClick={handleSendOtp}
+              disabled={otpState.sendingOtp || !otpState.email.trim()}
             >
-              {otpState.resetting ? 'Đang đặt lại...' : 'Đặt lại mật khẩu'}
+              {otpState.sendingOtp ? 'Đang gửi...' : otpState.otpSent ? 'Gửi lại' : 'Gửi OTP'}
             </Button>
           </div>
+          <div>
+            <Label htmlFor="otpNewPassword">Mật khẩu mới</Label>
+            <Input
+              id="otpNewPassword"
+              type="password"
+              value={otpState.newPassword}
+              onChange={(e) => setOtpState((prev) => ({ ...prev, newPassword: e.target.value }))}
+              className="mt-1"
+              disabled={otpState.resetting}
+            />
+          </div>
+          <div>
+            <Label htmlFor="otpConfirmPassword">Xác nhận mật khẩu mới</Label>
+            <Input
+              id="otpConfirmPassword"
+              type="password"
+              value={otpState.confirmNewPassword}
+              onChange={(e) => setOtpState((prev) => ({ ...prev, confirmNewPassword: e.target.value }))}
+              className="mt-1"
+              disabled={otpState.resetting}
+            />
+          </div>
+          <Button
+            onClick={handleResetPassword}
+            className="w-full"
+            disabled={otpState.resetting}
+          >
+            {otpState.resetting ? 'Đang đặt lại...' : 'Đặt lại mật khẩu'}
+          </Button>
         </div>
       </CardContent>
     </Card>
