@@ -267,24 +267,10 @@ export function Blog() {
                             )}
                           </span>
                         </div>
-                        <span>•</span>
-                        <span>{article.readTime} phút đọc</span>
                       </div>
 
-                      <div className="flex items-center justify-between pt-3 border-t">
-                        <div className="flex items-center space-x-2">
-                          <img
-                            src={article.authorAvatar}
-                            alt={article.author}
-                            className="w-6 h-6 rounded-full"
-                          />
-                          <span className="text-sm text-gray-700">
-                            {article.author}
-                          </span>
-                        </div>
-                        <span className="text-xs text-gray-500">
-                          {article.views} lượt xem
-                        </span>
+                      <div className="pt-3 border-t text-sm text-gray-700">
+                        {article.author || ' '}
                       </div>
                     </CardContent>
                   </Card>
