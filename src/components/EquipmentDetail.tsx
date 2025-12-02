@@ -20,7 +20,7 @@ import {
 } from "react-router-dom";
 import { toast } from "sonner";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
-import { formatVNDate } from "../utils/timezone";
+import { formatVNDate, toUTCFromVNDateTime } from "../utils/timezone";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -276,8 +276,8 @@ export function EquipmentDetail({ user }: EquipmentDetailProps) {
               quantity: 1,
             },
           ],
-          startDate: rentalDuration.startDate,
-          endDate: rentalDuration.endDate,
+          startDate: toUTCFromVNDateTime(rentalDuration.startDate) || rentalDuration.startDate,
+          endDate: toUTCFromVNDateTime(rentalDuration.endDate, '23:59') || rentalDuration.endDate,
         }),
       });
 

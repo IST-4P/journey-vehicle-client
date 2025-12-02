@@ -21,7 +21,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from './
 import { toast } from 'sonner';
 import { uploadAvatarImage, uploadLicenseImages } from '../utils/media-upload';
 import { connectPaymentSocket } from '../utils/ws-client';
-import { formatVNTime, formatVNDate } from '../utils/timezone';
+import { formatVNTime, formatVNDate, toUTCFromVNDateTime } from '../utils/timezone';
 
 // License class enum
 export const LicenseClassEnum = {
@@ -207,6 +207,35 @@ function AccountTab({ user, driver }: { user: User; driver?: Driver | null }) {
     back?: File;
     selfie?: File;
   }>({});
+  const [licensePreviews, setLicensePreviews] = useState<{
+    front?: string;
+    back?: string;
+    selfie?: string;
+  }>({});
+  const objectUrlCache = useRef<string[]>([]);
+
+  const setPreview = (type: 'front' | 'back' | 'selfie', url?: string) => {
+    if (url && url.startsWith('blob:')) {
+      objectUrlCache.current.push(url);
+    }
+    setLicensePreviews((prev) => ({ ...prev, [type]: url }));
+  };
+
+  useEffect(() => {
+    // Preload existing images as preview when driver data is available
+    setLicensePreviews({
+      front: driver?.frontImageUrl || '',
+      back: driver?.backImageUrl || '',
+      selfie: driver?.selfieImageUrl || '',
+    });
+  }, [driver?.frontImageUrl, driver?.backImageUrl, driver?.selfieImageUrl]);
+
+  useEffect(() => {
+    return () => {
+      objectUrlCache.current.forEach((url) => URL.revokeObjectURL(url));
+      objectUrlCache.current = [];
+    };
+  }, []);
 
   const handleAvatarUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -263,6 +292,8 @@ function AccountTab({ user, driver }: { user: User; driver?: Driver | null }) {
       ...prev,
       [type]: file
     }));
+    const previewUrl = URL.createObjectURL(file);
+    setPreview(type, previewUrl);
 
     toast.success(`Đã chọn ảnh ${type === 'front' ? 'mặt trước' : type === 'back' ? 'mặt sau' : 'selfie'}`);
   };
@@ -696,6 +727,13 @@ function AccountTab({ user, driver }: { user: User; driver?: Driver | null }) {
                   <div>
                     <Label className="text-sm font-medium">Mặt trước GPLX *</Label>
                     <div className="mt-1 border-2 border-dashed border-gray-300 rounded-lg p-3 text-center">
+                      {licensePreviews.front && (
+                        <img
+                          src={licensePreviews.front}
+                          alt="Xem trước mặt trước GPLX"
+                          className="mx-auto mb-2 h-24 w-full max-w-[180px] rounded border object-cover"
+                        />
+                      )}
                       <Upload className="h-5 w-5 text-gray-400 mx-auto mb-1" />
                       <p className="text-xs text-gray-600 mb-2 truncate">
                         {licenseImages.front ? licenseImages.front.name : 'Chọn ảnh mặt trước'}
@@ -722,6 +760,13 @@ function AccountTab({ user, driver }: { user: User; driver?: Driver | null }) {
                   <div>
                     <Label className="text-sm font-medium">Mặt sau GPLX *</Label>
                     <div className="mt-1 border-2 border-dashed border-gray-300 rounded-lg p-3 text-center">
+                      {licensePreviews.back && (
+                        <img
+                          src={licensePreviews.back}
+                          alt="Xem trước mặt sau GPLX"
+                          className="mx-auto mb-2 h-24 w-full max-w-[180px] rounded border object-cover"
+                        />
+                      )}
                       <Upload className="h-5 w-5 text-gray-400 mx-auto mb-1" />
                       <p className="text-xs text-gray-600 mb-2 truncate">
                         {licenseImages.back ? licenseImages.back.name : 'Chọn ảnh mặt sau'}
@@ -749,6 +794,13 @@ function AccountTab({ user, driver }: { user: User; driver?: Driver | null }) {
                 <div className="mt-4">
                   <Label className="text-sm font-medium">Ảnh selfie với GPLX (tùy chọn)</Label>
                   <div className="mt-1 border-2 border-dashed border-gray-300 rounded-lg p-3 text-center max-w-md mx-auto">
+                    {licensePreviews.selfie && (
+                      <img
+                        src={licensePreviews.selfie}
+                        alt="Xem trước ảnh selfie"
+                        className="mx-auto mb-2 h-24 w-full max-w-[220px] rounded border object-cover"
+                      />
+                    )}
                     <Upload className="h-5 w-5 text-gray-400 mx-auto mb-1" />
                     <p className="text-xs text-gray-600 mb-2 truncate">
                       {licenseImages.selfie ? licenseImages.selfie.name : 'Chọn ảnh selfie'}
@@ -2713,6 +2765,8 @@ function getCheckFormDefaults(): CheckFormState {
 
 function CheckForm({ bookingId, type, onSuccess }: { bookingId: string; type: CheckType; onSuccess?: () => void }) {
   const [form, setForm] = useState<CheckFormState>(getCheckFormDefaults);
+  const [previewImages, setPreviewImages] = useState<string[]>([]);
+  const [previewDamageImages, setPreviewDamageImages] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const {
     coords,
@@ -2739,6 +2793,12 @@ function CheckForm({ bookingId, type, onSuccess }: { bookingId: string; type: Ch
   const handleFileChange = (key: 'images' | 'damageImages') => (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []).slice(0, 6);
     setForm((prev) => ({ ...prev, [key]: files }));
+    const urls = files.map((file) => URL.createObjectURL(file));
+    if (key === 'images') {
+      setPreviewImages(urls);
+    } else {
+      setPreviewDamageImages(urls);
+    }
   };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -2882,7 +2942,21 @@ function CheckForm({ bookingId, type, onSuccess }: { bookingId: string; type: Ch
       <div>
         <Label>Hình ảnh hiện trạng</Label>
         <Input type="file" accept="image/*" multiple onChange={handleFileChange('images')} />
-        {form.images.length > 0 && <p className="text-xs text-gray-500">{form.images.length} ảnh đã chọn</p>}
+        {form.images.length > 0 && (
+          <div className="mt-2 space-y-1">
+            <p className="text-xs text-gray-500">{form.images.length} ảnh đã chọn</p>
+            <div className="grid grid-cols-3 gap-2">
+              {previewImages.map((src, idx) => (
+                <img
+                  key={src}
+                  src={src}
+                  alt={`Hiện trạng ${idx + 1}`}
+                  className="h-24 w-full rounded object-cover border"
+                />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
       <div>
         <Label>Ghi chú</Label>
@@ -2903,7 +2977,21 @@ function CheckForm({ bookingId, type, onSuccess }: { bookingId: string; type: Ch
       <div>
         <Label>Ảnh hư hỏng</Label>
         <Input type="file" accept="image/*" multiple onChange={handleFileChange('damageImages')} />
-        {form.damageImages.length > 0 && <p className="text-xs text-gray-500">{form.damageImages.length} ảnh đã chọn</p>}
+        {form.damageImages.length > 0 && (
+          <div className="mt-2 space-y-1">
+            <p className="text-xs text-gray-500">{form.damageImages.length} ảnh đã chọn</p>
+            <div className="grid grid-cols-3 gap-2">
+              {previewDamageImages.map((src, idx) => (
+                <img
+                  key={src}
+                  src={src}
+                  alt={`Hư hỏng ${idx + 1}`}
+                  className="h-24 w-full rounded object-cover border"
+                />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
       <Button type="submit" className="w-full" disabled={isSubmitting}>
         {isSubmitting ? 'Đang gửi...' : `Gửi ${typeLabel}`}
@@ -4072,7 +4160,15 @@ function useComplaintList(page: number, limit: number) {
         });
         if (!response.ok) {
           const err = await response.json().catch(() => ({}));
-          throw new Error(err.message || `HTTP ${response.status}`);
+          const message = err?.message || `HTTP ${response.status}`;
+          if (response.status === 404 || message === 'Error.ComplaintNotFound') {
+            setComplaints([]);
+            setTotalPages(1);
+            setError(null);
+            setLoading(false);
+            return;
+          }
+          throw new Error(message);
         }
         const json = await response.json();
         const payload = json.data ?? json;
@@ -5835,7 +5931,7 @@ function EquipmentExtensionPanel({
         },
         body: JSON.stringify({
           rentalId,
-          newEndDate
+          newEndDate: toUTCFromVNDateTime(newEndDate, '23:59') || newEndDate
         })
       });
 
@@ -6502,6 +6598,24 @@ function ComplaintsTab() {
         return <Badge variant="outline">{status}</Badge>;
     }
   };
+
+  // Listen complaint WS to auto-refresh list on new events
+  useEffect(() => {
+    const ws = connectComplaintSocket('', { debug: false });
+    const refresh = () => refetch();
+    const unsubscribers = [
+      ws.on('newComplaint', refresh),
+      ws.on('complaint', refresh),
+      ws.on('statusUpdate', refresh),
+      ws.on('complaintStatus', refresh),
+      ws.on('complaintMessage', refresh),
+      ws.on('newComplaintMessage', refresh),
+    ];
+    return () => {
+      unsubscribers.forEach((off) => off && off());
+      ws.close();
+    };
+  }, [refetch]);
 
   return (
     <Card>

@@ -36,6 +36,18 @@ export const convertVNToUTC = (date: Date = new Date()): string => {
 };
 
 /**
+ * Convert a Vietnam date/time string to UTC ISO string.
+ * Useful when backend expects UTC but user inputs are VN local (e.g. date pickers).
+ * @param dateStr - yyyy-MM-dd
+ * @param timeStr - HH:mm (defaults 00:00)
+ */
+export const toUTCFromVNDateTime = (dateStr?: string, timeStr: string = '00:00'): string => {
+  if (!dateStr) return '';
+  const isoCandidate = new Date(`${dateStr}T${timeStr}:00+07:00`);
+  return isNaN(isoCandidate.getTime()) ? '' : isoCandidate.toISOString();
+};
+
+/**
  * Format UTC timestamp to Vietnam time string
  * @param timestamp - UTC timestamp string
  * @param options - Intl.DateTimeFormatOptions
