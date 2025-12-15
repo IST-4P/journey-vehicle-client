@@ -1195,9 +1195,6 @@ function HistoryTab() {
       <Card>
         <CardHeader>
           <CardTitle>Lịch sử thuê xe</CardTitle>
-          <p className="text-sm text-gray-600">
-            Theo dõi booking theo từng giai đoạn: danh sách ⇢ chi tiết ⇢ timeline ⇢ check-in/out ⇢ gia hạn.
-          </p>
         </CardHeader>
         <CardContent className="space-y-4">
           {error && (
@@ -5287,7 +5284,8 @@ function EquipmentDetailTabs({
   onReviewSubmitted: () => void;
 }) {
   const isCompleted = (rental?.status || '').toUpperCase() === 'COMPLETED';
-  const tabs: { id: EquipmentDetailTabKey; label: string; content: React.ReactNode }[] = [
+  const extensionLocked = isCompleted;
+  const tabs: { id: EquipmentDetailTabKey; label: string; content: React.ReactNode; disabled?: boolean }[] = [
     {
       id: 'info',
       label: 'Thông tin thuê',
@@ -5296,6 +5294,7 @@ function EquipmentDetailTabs({
     {
       id: 'extension',
       label: 'Gia hạn thuê',
+      disabled: extensionLocked,
       content: (
         <EquipmentExtensionPanel
           rentalId={rentalId}
@@ -5304,6 +5303,8 @@ function EquipmentDetailTabs({
           loading={extensionLoading}
           onRefresh={onRefreshExtension}
           onExtended={onExtended}
+          locked={extensionLocked}
+          lockedReason="Đơn thuê đã hoàn tất, không thể gia hạn."
         />
       )
     }
@@ -5317,13 +5318,21 @@ function EquipmentDetailTabs({
     });
   }
 
-  const safeValue = tabs.some((tab) => tab.id === activeTab) ? activeTab : tabs[0].id;
+  const firstAvailableTab = tabs.find((tab) => !tab.disabled) || tabs[0];
+  const safeValue = tabs.some((tab) => tab.id === activeTab && !tab.disabled)
+    ? activeTab
+    : firstAvailableTab.id;
 
   return (
     <Tabs value={safeValue} onValueChange={(value) => onTabChange(value as EquipmentDetailTabKey)}>
       <TabsList className="flex w-full flex-wrap gap-2 bg-muted p-2 h-auto">
         {tabs.map((tab) => (
-          <TabsTrigger key={tab.id} value={tab.id} className="flex-1 whitespace-normal py-2">
+          <TabsTrigger
+            key={tab.id}
+            value={tab.id}
+            className="flex-1 whitespace-normal py-2"
+            disabled={tab.disabled}
+          >
             {tab.label}
           </TabsTrigger>
         ))}
@@ -5361,6 +5370,7 @@ function EquipmentDetailAccordion({
   onReviewSubmitted: () => void;
 }) {
   const isCompleted = (rental?.status || '').toUpperCase() === 'COMPLETED';
+  const extensionLocked = isCompleted;
   const items: { id: EquipmentDetailTabKey; title: string; content: React.ReactNode }[] = [
     {
       id: 'info',
@@ -5378,6 +5388,8 @@ function EquipmentDetailAccordion({
           loading={extensionLoading}
           onRefresh={onRefreshExtension}
           onExtended={onExtended}
+          locked={extensionLocked}
+          lockedReason="Đơn thuê đã hoàn tất, không thể gia hạn."
         />
       )
     }
@@ -5892,7 +5904,9 @@ function EquipmentExtensionPanel({
   extensions,
   loading,
   onRefresh,
-  onExtended
+  onExtended,
+  locked,
+  lockedReason
 }: {
   rentalId: string;
   currentEndDate?: string;
@@ -5900,6 +5914,8 @@ function EquipmentExtensionPanel({
   loading: boolean;
   onRefresh?: () => void;
   onExtended?: () => void;
+  locked?: boolean;
+  lockedReason?: string;
 }) {
   const apiBase = import.meta.env.VITE_API_BASE_URL;
   const [newEndDate, setNewEndDate] = useState<string>('');
@@ -5910,6 +5926,10 @@ function EquipmentExtensionPanel({
   }, [currentEndDate, rentalId]);
 
   const handleSubmit = async () => {
+    if (locked) {
+      toast.error(lockedReason || 'Đơn thuê đã hoàn tất, không thể gia hạn.');
+      return;
+    }
     if (!newEndDate) {
       toast.error('Vui lòng chọn ngày kết thúc mới');
       return;
@@ -5964,6 +5984,11 @@ function EquipmentExtensionPanel({
             </Button>
           )}
         </div>
+        {locked && (
+          <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
+            {lockedReason || 'Đơn thuê đã hoàn tất nên không thể gửi yêu cầu gia hạn.'}
+          </p>
+        )}
         <div className="grid gap-3 sm:grid-cols-[240px_auto] items-end">
           <div>
             <Label htmlFor="equipment-extension-date">Ngày kết thúc mới</Label>
@@ -5973,6 +5998,7 @@ function EquipmentExtensionPanel({
               value={newEndDate}
               min={minDate}
               onChange={(e) => setNewEndDate(e.target.value)}
+              disabled={locked}
             />
             {currentEndDate && (
               <p className="mt-1 text-xs text-gray-500">
@@ -5983,7 +6009,7 @@ function EquipmentExtensionPanel({
           <Button
             className="w-full sm:w-auto"
             onClick={handleSubmit}
-            disabled={submitting || !newEndDate}
+            disabled={locked || submitting || !newEndDate}
           >
             {submitting ? 'Đang gửi...' : 'Gửi gia hạn'}
           </Button>
