@@ -20,7 +20,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from './ui/accordion';
 import { toast } from 'sonner';
 import { uploadAvatarImage, uploadLicenseImages } from '../utils/media-upload';
-import { connectPaymentSocket } from '../utils/ws-client';
+import { connectPaymentSocket, connectComplaintSocket } from '../utils/ws-client';
 import { formatVNTime, formatVNDate, toUTCFromVNDateTime } from '../utils/timezone';
 
 // License class enum
